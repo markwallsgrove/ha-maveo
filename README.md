@@ -163,8 +163,9 @@ update every minute, and new or removed sticks on your account appear within 10 
 ## Troubleshooting
 
 - **Asked to sign in again**: Maveo rejected the stored password. Enter the current one.
-- **Entities unavailable**: the cloud or the stick did not answer. This is logged once
-  and again when it recovers. Check the stick's WiFi and the Maveo app.
+- **Entities unavailable**: the cloud or the stick did not answer three checks in a row
+  (30 s apart). This is logged once and again when it recovers. Check the stick's WiFi
+  and the Maveo app.
 - **Cloud connectivity is off**: the stick is reachable through the cloud but does not
   answer; power-cycle the stick.
 - For more detail, enable debug logging and attach the diagnostics download to an issue:

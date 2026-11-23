@@ -22,6 +22,8 @@ DEVICE_POLL_INTERVAL = 30
 FAST_POLL_INTERVAL = 2
 FAST_POLL_WINDOW = 20
 GUEST_POLL_INTERVAL = 60
+# Regular device polls that may fail before entities become unavailable
+MISSED_POLLS_BEFORE_UNAVAILABLE = 3
 
 # Service names
 SERVICE_CREATE_GUEST = "create_guest"

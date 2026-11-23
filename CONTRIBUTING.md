@@ -34,6 +34,10 @@ Full protocol documentation is in [`docs/`](docs/), including reverse-engineerin
 | Guest keys | 60 s, REST |
 | Sticks on the account | 10 min, REST |
 
+A failed poll keeps the last state. Entities become unavailable after 3 failed
+regular polls in a row; failed fast polls do not count. When the stick does not
+answer the door status, the rest of the burst is skipped.
+
 ## Credentials
 
 Access renews with the Cognito refresh token. When Cognito rejects it, the integration
