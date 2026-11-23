@@ -33,7 +33,7 @@ def test_observed_opening_is_timed() -> None:
     tracker.update(DOOR_CLOSED, _at(0))
     assert tracker.update(DOOR_OPENING, _at(30)) is None
     assert tracker.update(DOOR_OPENING, _at(32)) is None
-    assert tracker.update(DOOR_OPEN, _at(44)) == Travel(Direction.OPEN, 14.0)
+    assert tracker.update(DOOR_OPEN, _at(44)) == Travel(Direction.OPEN, 14)
 
 
 def test_command_time_starts_the_clock() -> None:
@@ -42,7 +42,7 @@ def test_command_time_starts_the_clock() -> None:
     tracker.command_sent(Direction.CLOSE, _at(10))
     assert tracker.update(DOOR_OPEN, _at(11)) is None
     assert tracker.update(DOOR_CLOSING, _at(13)) is None
-    assert tracker.update(DOOR_CLOSED, _at(25)) == Travel(Direction.CLOSE, 15.0)
+    assert tracker.update(DOOR_CLOSED, _at(25)) == Travel(Direction.CLOSE, 15)
 
 
 def test_missed_movement_counts_without_duration() -> None:
@@ -75,7 +75,7 @@ def test_unknown_reading_keeps_state() -> None:
     tracker.update(DOOR_CLOSED, _at(0))
     tracker.update(DOOR_OPENING, _at(2))
     assert tracker.update(None, _at(4)) is None
-    assert tracker.update(DOOR_OPEN, _at(6)) == Travel(Direction.OPEN, 4.0)
+    assert tracker.update(DOOR_OPEN, _at(6)) == Travel(Direction.OPEN, 4)
 
 
 @given(
@@ -105,3 +105,12 @@ def test_travels_only_end_at_a_new_resting_position(
             )
         if position is not None:
             last = position
+
+
+def test_durations_are_whole_seconds() -> None:
+    tracker = DoorTracker()
+    tracker.update(DOOR_CLOSED, _at(0))
+    tracker.command_sent(Direction.OPEN, _at(1))
+    travel = tracker.update(DOOR_OPEN, _at(18.277691))
+    assert travel == Travel(Direction.OPEN, 17)
+    assert travel is not None and isinstance(travel.seconds, int)

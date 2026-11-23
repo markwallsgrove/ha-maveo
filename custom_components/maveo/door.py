@@ -26,7 +26,7 @@ class Travel:
     """A door travel that ended; `seconds` is None when its start was missed."""
 
     direction: Direction
-    seconds: float | None
+    seconds: int | None
 
 
 class DoorTracker:
@@ -64,6 +64,6 @@ class DoorTracker:
             return None
         seconds = None
         if self._moving is not None and self._moving[0] is end:
-            seconds = (now - self._moving[1]).total_seconds()
+            seconds = round((now - self._moving[1]).total_seconds())
         self._moving = None
         return Travel(end, seconds)
