@@ -1,21 +1,16 @@
-# Maveo — Home Assistant Integration
+# Maveo for Home Assistant
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5)](https://github.com/hacs/integration)
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2026.10%2B-blue)](https://www.home-assistant.io/)
-[![IoT Class](https://img.shields.io/badge/IoT%20class-Cloud%20Polling-yellow)](https://developers.home-assistant.io/docs/creating_integration_manifest#iot-class)
 [![License: MIT](https://img.shields.io/github/license/markwallsgrove/ha-maveo)](https://opensource.org/license/mit)
-[![hassfest](https://github.com/markwallsgrove/ha-maveo/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/markwallsgrove/ha-maveo/actions/workflows/hassfest.yaml)
-[![HACS validation](https://github.com/markwallsgrove/ha-maveo/actions/workflows/hacs.yaml/badge.svg)](https://github.com/markwallsgrove/ha-maveo/actions/workflows/hacs.yaml)
-[![Ruff](https://github.com/markwallsgrove/ha-maveo/actions/workflows/lint.yaml/badge.svg)](https://github.com/markwallsgrove/ha-maveo/actions/workflows/lint.yaml)
 
-Control your **Marantec Maveo** garage door stick from Home Assistant.
+Open, close and stop your **Marantec maveo** garage door, switch its light, and see
+what the door is doing, all from Home Assistant.
 
-Vendored fork of [yoda-jm/ha-maveo](https://github.com/yoda-jm/ha-maveo) with unused code removed,
-tighter secret handling and a test suite.
+> **Unofficial.** This is a community project. It is not made, endorsed or supported
+> by Marantec. Marantec and maveo are trademarks of their owners.
 
-> **Cloud integration** — requires an active internet connection and a Maveo account.
-> All commands and state updates go through the Marantec cloud (AWS IoT + Cognito).
-> The integration cannot operate offline or if the Marantec cloud is unreachable.
+> **Needs the internet.** Everything goes through the Marantec cloud, using your maveo
+> account. Nothing works while your internet or the Marantec cloud is down.
 
 ---
 
@@ -29,26 +24,21 @@ later are picked up within 10 minutes, without a restart.
 
 ## Supported functions
 
-| Entity | Description |
-|--------|-------------|
-| **Cover** — Garage door | Open, close, stop; live position (open / closed / opening / closing) |
-| **Light** — Garage light | Turn on/off, live state |
-| **Binary sensor** — Cloud connectivity | Whether the stick answers (diagnostic) |
-| **Sensor** — Firmware | Stick firmware version (diagnostic) |
-| **Sensor** — Time to close | Auto-close timer in minutes |
-| **Sensor** — WiFi signal | RSSI in dBm, with SSID/IP/MAC attributes (diagnostic, disabled by default) |
-| **Sensor** — Buzzer | Buzzer state (diagnostic) |
-| **Sensor** — Stick type | `bluefi` or `connect` (diagnostic, disabled by default) |
-| **Sensor** — Outdoor temperature / humidity | Weather at the stick's GPS location |
-| **Sensor** — Indoor sensor, temperature, humidity, battery | Paired H+T sensor |
-| **Device tracker** — Location | Stick GPS coordinates on the map |
-| **Sensor** — Opening time / Closing time | Seconds the last full open or close took; long-term statistics show the trend |
-| **Sensor** — Openings | Number of times the door opened (kept across restarts) |
-| **Sensor** — Guest ×N | One per guest key: remaining time, rights, claimed status, app name |
+| Feature | What you get |
+|---------|--------------|
+| Garage door | Open, close and stop; shows open, closed, opening or closing |
+| Garage light | Turn on and off |
+| Opening time / Closing time | How many seconds the last full open or close took; the history shows if the door slows down |
+| Openings | How many times the door has opened |
+| Time to close | The stick's auto-close timer, in minutes |
+| Outdoor temperature / humidity | The weather where the stick is (needs a location set in the maveo app) |
+| Indoor temperature / humidity / battery | From the optional maveo indoor sensor |
+| Location | The stick on the map |
+| Guest keys | One sensor per guest key: time left, access level, whether it has been used |
+| Diagnostics | Online status, firmware, WiFi signal, buzzer and stick type |
 
-Guest sensors are created and removed automatically as guest keys are added or revoked.
-The device page offers **Download diagnostics** with credentials, serials, network
-details and location redacted.
+Guest key sensors appear and disappear as keys are created or revoked. The WiFi signal
+and stick type sensors are off by default; turn them on from the device page.
 
 ## Use cases
 
@@ -59,12 +49,12 @@ details and location redacted.
 
 ---
 
-## Installation via HACS
+## Installation
 
-1. In HACS (or the HA Marketplace) → three-dot menu → **Custom repositories**
-2. Add `https://github.com/markwallsgrove/ha-maveo` — category **Integration**
-3. Install **Maveo** and restart Home Assistant
-4. **Settings → Devices & services → Add integration** → search **Maveo**
+1. Open **Marketplace** (or HACS) → three-dot menu → **Custom repositories**.
+2. Add `https://github.com/markwallsgrove/ha-maveo` with the category **Integration**.
+3. Find **Maveo**, download it, and restart Home Assistant.
+4. Go to **Settings → Devices & services → Add integration** and search for **Maveo**.
 
 ### Configuration parameters
 
@@ -77,17 +67,16 @@ details and location redacted.
 Change the password or region later with **Reconfigure** on the integration entry.
 There are no other options.
 
-Credentials renew with the Cognito refresh token. When Cognito rejects the refresh
-token, the integration signs in again with the stored password. Home Assistant only asks
-for the password (reauth) when Maveo rejects it, e.g. after a password change.
+You sign in once. Home Assistant only asks for your password again if maveo rejects it,
+for example after you change it.
 
-Home Assistant has no encrypted secret store: the password and refresh token are kept in
-plain text in `.storage/core.config_entries`, like other cloud integrations.
+Home Assistant stores your maveo password unencrypted in its configuration folder, as it
+does for other cloud integrations. Keep backups of that folder private.
 
 ### Removal
 
 1. **Settings → Devices & services → Maveo** → three-dot menu → **Delete**.
-2. Optionally uninstall **Maveo** in HACS and restart Home Assistant.
+2. Optionally remove **Maveo** from the Marketplace (or HACS) and restart Home Assistant.
 
 Deleting the entry does not change anything on your Maveo account. Guest keys stay
 valid until they expire or you revoke them in the Maveo app.
@@ -159,26 +148,17 @@ script:
 
 ## Data updates
 
-| Data | Interval |
-|------|----------|
-| Device state (door, light, WiFi…) | 30 s — MQTT burst-poll |
-| Guest key list | 60 s — REST |
-| Sticks on the account | 10 min — REST |
-| Door position while moving, and for 20 s after a door command | 2 s — MQTT |
-| After a light command | Refresh after 2 s |
+The door, light and sensors update every 30 seconds. While the door moves, and for
+20 seconds after you open, close or stop it, the door updates every 2 seconds. Guest keys
+update every minute, and new or removed sticks on your account appear within 10 minutes.
 
 ## Known limitations
 
-- Cloud only: nothing works when the Marantec cloud or your internet is down.
-- State is polled, so a door moved with the remote shows up within about 30 s.
-- Travel times are accurate to about 2 s. A travel that started between polls is timed
-  from when it was first seen, and one that was not seen moving at all is counted but
-  not timed.
-- Each poll takes over the stick's MQTT session for a moment; the stick reconnects by
-  itself within a few seconds.
-- Accounts with multi-factor sign-in are not supported.
-- Outdoor weather needs GPS coordinates set on the stick.
-- The H+T sensor units are inferred from the app and not yet confirmed on a live sensor.
+- A door moved with a remote or wall button shows up within about 30 seconds.
+- Opening and closing times are accurate to about 2 seconds. A door that was never seen
+  moving is counted but not timed.
+- Accounts with two-step sign-in are not supported.
+- Indoor sensor readings have not been tested with a real sensor.
 
 ## Troubleshooting
 
@@ -205,38 +185,11 @@ logger:
   numeric Maveo device ID.
 - The WiFi signal and stick type sensors are disabled by default for new installs.
 
----
+## Contributing
 
-## Protocol
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- **Authentication**: AWS Cognito USER_PASSWORD_AUTH (setup) / REFRESH_TOKEN_AUTH → Identity Pool → temp AWS credentials
-- **Device control**: MQTT 3.1.1 over WebSocket (SigV4 header auth) to AWS IoT Core
-- **Management**: Marantec REST API (`/admin` endpoint)
+## Credits
 
-Full protocol documentation is in [`docs/`](docs/), including reverse-engineering notes.
-
----
-
-## Development
-
-```bash
-python -m venv .venv
-.venv/bin/pip install -r requirements_test.txt
-.venv/bin/ruff check custom_components tests
-.venv/bin/mypy
-.venv/bin/pytest -q
-```
-
-Tests run Home Assistant against fakes at the network boundary: a moto server for
-Cognito, and a local aiohttp server for the REST API and the stick's MQTT-over-WebSocket
-endpoint. Protocol code also has property-based tests (Hypothesis).
-
-`custom_components/maveo/api` is the async cloud client. It has no Home Assistant
-imports and uses the `aiohttp` session passed to it.
-
----
-
-## Disclaimer
-
-This integration is reverse-engineered from the Maveo Android app and is not affiliated
-with or endorsed by Marantec. Use at your own risk.
+Based on [yoda-jm/ha-maveo](https://github.com/yoda-jm/ha-maveo). This integration works
+by talking to the Marantec cloud the same way the maveo app does. Use it at your own risk.
