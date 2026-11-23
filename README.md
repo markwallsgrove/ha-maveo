@@ -31,7 +31,7 @@ later are picked up within 10 minutes, without a restart.
 
 | Entity | Description |
 |--------|-------------|
-| **Cover** — Garage door | Open, close; live position (open / closed / opening / closing) |
+| **Cover** — Garage door | Open, close, stop; live position (open / closed / opening / closing) |
 | **Light** — Garage light | Turn on/off, live state |
 | **Binary sensor** — Cloud connectivity | Whether the stick answers (diagnostic) |
 | **Sensor** — Firmware | Stick firmware version (diagnostic) |
@@ -42,6 +42,8 @@ later are picked up within 10 minutes, without a restart.
 | **Sensor** — Outdoor temperature / humidity | Weather at the stick's GPS location |
 | **Sensor** — Indoor sensor, temperature, humidity, battery | Paired H+T sensor |
 | **Device tracker** — Location | Stick GPS coordinates on the map |
+| **Sensor** — Opening time / Closing time | Seconds the last full open or close took; long-term statistics show the trend |
+| **Sensor** — Openings | Number of times the door opened (kept across restarts) |
 | **Sensor** — Guest ×N | One per guest key: remaining time, rights, claimed status, app name |
 
 Guest sensors are created and removed automatically as guest keys are added or revoked.
@@ -53,6 +55,7 @@ details and location redacted.
 - See whether the garage is open from anywhere, and close it from the dashboard.
 - Close the garage automatically at night or when everybody leaves.
 - Give a visitor or tradesperson a time-limited key from a script.
+- Spot a door that gets slower over time, an early sign of wear.
 
 ---
 
@@ -161,12 +164,16 @@ script:
 | Device state (door, light, WiFi…) | 30 s — MQTT burst-poll |
 | Guest key list | 60 s — REST |
 | Sticks on the account | 10 min — REST |
-| After any user command | Refresh after 2 s |
+| Door position while moving, and for 20 s after a door command | 2 s — MQTT |
+| After a light command | Refresh after 2 s |
 
 ## Known limitations
 
 - Cloud only: nothing works when the Marantec cloud or your internet is down.
 - State is polled, so a door moved with the remote shows up within about 30 s.
+- Travel times are accurate to about 2 s. A travel that started between polls is timed
+  from when it was first seen, and one that was not seen moving at all is counted but
+  not timed.
 - Each poll takes over the stick's MQTT session for a moment; the stick reconnects by
   itself within a few seconds.
 - Accounts with multi-factor sign-in are not supported.

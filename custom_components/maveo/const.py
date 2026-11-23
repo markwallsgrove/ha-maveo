@@ -18,6 +18,9 @@ PLATFORMS = [
 # Poll intervals (seconds)
 ACCOUNT_POLL_INTERVAL = 600
 DEVICE_POLL_INTERVAL = 30
+# Door position polling while the door moves or just after a door command
+FAST_POLL_INTERVAL = 2
+FAST_POLL_WINDOW = 20
 GUEST_POLL_INTERVAL = 60
 
 # Service names

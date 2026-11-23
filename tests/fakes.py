@@ -168,6 +168,8 @@ class FakeStick:
     state dump before the door status, as a BlueFi stick does. `ht_sensor`
     answers the indoor sensor commands as a paired sensor. `reachable=False`
     makes the WebSocket handshake fail, as when AWS IoT is unreachable.
+    A door command makes the door report moving for `travel_reads` status
+    reads, then the end position.
     """
 
     def __init__(self) -> None:
@@ -178,6 +180,15 @@ class FakeStick:
         self.connack_code = 0
         self.bluefi = False
         self.ht_sensor: dict[str, Any] | None = None
+        self.travel_reads = 2
+        self.motion: list[int] = []
+
+    def move(self, moving: int, end: int) -> None:
+        """Start the door moving, as a wall button or remote does."""
+        self.motion = [moving] * self.travel_reads + [end]
+
+    def status_reads(self) -> int:
+        return sum("AtoS_s" in c for c in self.commands)
 
     async def handle(self, request: web.Request) -> web.StreamResponse:
         if not self.reachable:
@@ -210,6 +221,18 @@ class FakeStick:
         return []
 
     def _answer(self, command: dict[str, Any]) -> list[dict[str, Any]]:
+        door = command.get("AtoS_g")
+        if door == iot.Command.GARAGE_OPEN["AtoS_g"]:
+            self.move(iot.DOOR_OPENING, iot.DOOR_OPEN)
+        elif door == iot.Command.GARAGE_CLOSE["AtoS_g"]:
+            self.move(iot.DOOR_CLOSING, iot.DOOR_CLOSED)
+        elif door == iot.Command.GARAGE_STOP["AtoS_g"]:
+            self.motion = [iot.DOOR_STOPPED]
+        if door is not None:
+            return [{"StoA_g_r": 1}]
+        if "AtoS_s" in command and self.motion:
+            position = self.motion.pop(0) if len(self.motion) > 1 else self.motion[0]
+            self.replies["AtoS_s"] = {"StoA_s": position}
         if self.bluefi and "AtoS_s" in command and "AtoS_s" in self.replies:
             return [{"StoA_l_r": 1}, {"StoA_buzzer_r": 0}, self.replies["AtoS_s"]]
         if self.ht_sensor is not None and "AtoS_sensor" in command:
