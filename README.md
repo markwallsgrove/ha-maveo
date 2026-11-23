@@ -191,5 +191,15 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credits
 
-Based on [yoda-jm/ha-maveo](https://github.com/yoda-jm/ha-maveo). This integration works
-by talking to the Marantec cloud the same way the maveo app does. Use it at your own risk.
+This integration builds on [ha-maveo](https://github.com/yoda-jm/ha-maveo) by Vincent
+Le Ligeour ([@yoda-jm](https://github.com/yoda-jm)). He worked out how the maveo app talks
+to the Marantec cloud, wrote the original integration, and wrote the protocol notes in
+[`docs/`](docs/). This version reworks that code and adds new features. Thank you, Vincent.
+
+Earlier community projects also worked with the maveo cloud:
+
+- [ioBroker.maveo](https://github.com/TA2k/ioBroker.maveo) by TA2k (ioBroker adapter, 2021)
+- [ha-maveo-cloud](https://github.com/thtemme/ha-maveo-cloud) by thtemme (Home Assistant integration, 2025)
+- [maveo-stick-node](https://github.com/ebertmi/maveo-stick-node) by ebertmi (Node.js library, 2026)
+
+It talks to the Marantec cloud the same way the maveo app does. Use it at your own risk.
