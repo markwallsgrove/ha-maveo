@@ -98,6 +98,15 @@
       },
       "guest": {
         "name": "Guest {guest}"
+      },
+      "open_duration": {
+        "name": "Opening time"
+      },
+      "close_duration": {
+        "name": "Closing time"
+      },
+      "open_count": {
+        "name": "Openings"
       }
     },
     "binary_sensor": {

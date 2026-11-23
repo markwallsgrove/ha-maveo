@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
@@ -28,6 +30,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .api import GuestUser
 from .coordinator import MaveoGuestCoordinator
 from .data import MaveoConfigEntry, MaveoDevice
+from .door import Direction, Travel
 from .entity import MaveoEntity, maveo_device_info
 
 PARALLEL_UPDATES = 0
@@ -140,6 +143,56 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
     ),
 )
 
+type StatValue = int | float | None
+
+
+def _duration(direction: Direction) -> Callable[[StatValue, Travel], StatValue]:
+    def apply(value: StatValue, travel: Travel) -> StatValue:
+        if travel.direction is direction and travel.seconds is not None:
+            return travel.seconds
+        return value
+
+    return apply
+
+
+def _count_opens(value: StatValue, travel: Travel) -> StatValue:
+    return (value or 0) + 1 if travel.direction is Direction.OPEN else value
+
+
+@dataclass(frozen=True, kw_only=True)
+class MaveoDoorStatDescription(SensorEntityDescription):
+    apply: Callable[[StatValue, Travel], StatValue]
+    initial: StatValue = None
+
+
+DOOR_STATS: tuple[MaveoDoorStatDescription, ...] = (
+    MaveoDoorStatDescription(
+        key="open_duration",
+        translation_key="open_duration",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        apply=_duration(Direction.OPEN),
+    ),
+    MaveoDoorStatDescription(
+        key="close_duration",
+        translation_key="close_duration",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        apply=_duration(Direction.CLOSE),
+    ),
+    MaveoDoorStatDescription(
+        key="open_count",
+        translation_key="open_count",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        apply=_count_opens,
+        initial=0,
+    ),
+)
+
 # Coordinator keys exposed as attributes of the H+T sensor status entity.
 _HT_ATTRIBUTES = (
     ("ht_temperature", "temperature"),
@@ -164,6 +217,7 @@ async def async_setup_entry(
     @callback
     def _add(device: MaveoDevice) -> None:
         async_add_entities(MaveoDeviceSensor(device, desc) for desc in DEVICE_SENSORS)
+        async_add_entities(MaveoDoorStatSensor(device, desc) for desc in DOOR_STATS)
         _track_guests(hass, entry, device, async_add_entities)
 
     entry.async_on_unload(entry.runtime_data.async_subscribe_devices(_add))
@@ -263,6 +317,36 @@ class MaveoDeviceSensor(MaveoEntity, SensorEntity):
                 if self.data.get(src) is not None
             }
         return None
+
+
+class MaveoDoorStatSensor(MaveoEntity, RestoreSensor):
+    """A door travel statistic, kept across restarts."""
+
+    entity_description: MaveoDoorStatDescription
+
+    def __init__(
+        self, device: MaveoDevice, description: MaveoDoorStatDescription
+    ) -> None:
+        super().__init__(device, description.key)
+        self.entity_description = description
+        self._value: StatValue = description.initial
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_sensor_data()
+        if last is not None and isinstance(last.native_value, int | float):
+            self._value = last.native_value
+
+    @property
+    def native_value(self) -> StatValue:
+        return self._value
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        travel = self.data.get("door_travel")
+        if isinstance(travel, Travel):
+            self._value = self.entity_description.apply(self._value, travel)
+        super()._handle_coordinator_update()
 
 
 class MaveoGuestSensor(CoordinatorEntity[MaveoGuestCoordinator], SensorEntity):

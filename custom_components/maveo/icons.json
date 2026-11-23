@@ -28,6 +28,15 @@
       },
       "guest": {
         "default": "mdi:account-key"
+      },
+      "open_duration": {
+        "default": "mdi:timer-arrow-up-outline"
+      },
+      "close_duration": {
+        "default": "mdi:timer-arrow-down-outline"
+      },
+      "open_count": {
+        "default": "mdi:counter"
       }
     }
   },

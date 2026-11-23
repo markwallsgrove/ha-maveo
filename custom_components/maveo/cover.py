@@ -12,7 +12,6 @@ from homeassistant.components.cover import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .api import Command
 from .api.iot import (
     DOOR_CLOSED,
     DOOR_CLOSING,
@@ -21,6 +20,7 @@ from .api.iot import (
     DOOR_STOPPED,
 )
 from .data import MaveoConfigEntry, MaveoDevice
+from .door import Direction
 from .entity import MaveoEntity
 
 PARALLEL_UPDATES = 1
@@ -42,7 +42,9 @@ class MaveoGarageDoor(MaveoEntity, CoverEntity):
     """Maveo garage door."""
 
     _attr_device_class = CoverDeviceClass.GARAGE
-    _attr_supported_features = CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE
+    _attr_supported_features = (
+        CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
+    )
     _attr_translation_key = "garage_door"
 
     def __init__(self, device: MaveoDevice) -> None:
@@ -77,7 +79,10 @@ class MaveoGarageDoor(MaveoEntity, CoverEntity):
         return attrs
 
     async def async_open_cover(self, **kwargs: Any) -> None:
-        await self.coordinator.async_send_command(Command.GARAGE_OPEN)
+        await self.coordinator.async_move_door(Direction.OPEN)
 
     async def async_close_cover(self, **kwargs: Any) -> None:
-        await self.coordinator.async_send_command(Command.GARAGE_CLOSE)
+        await self.coordinator.async_move_door(Direction.CLOSE)
+
+    async def async_stop_cover(self, **kwargs: Any) -> None:
+        await self.coordinator.async_move_door(None)

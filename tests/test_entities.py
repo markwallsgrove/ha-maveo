@@ -100,6 +100,7 @@ async def test_unknown_door_when_stick_silent(
     [
         ("cover", "open_cover", f"{DEVICE_ID}_cover", {"AtoS_g": 1}),
         ("cover", "close_cover", f"{DEVICE_ID}_cover", {"AtoS_g": 2}),
+        ("cover", "stop_cover", f"{DEVICE_ID}_cover", {"AtoS_g": 0}),
         ("light", "turn_on", f"{DEVICE_ID}_light", {"AtoS_l": 1}),
         ("light", "turn_off", f"{DEVICE_ID}_light", {"AtoS_l": 0}),
     ],

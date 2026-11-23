@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Mapping
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import Enum, auto
 from typing import Any
 
@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import (
     APIError,
@@ -24,19 +25,31 @@ from .api import (
     GuestUser,
     MaveoIoTClient,
 )
+from .api.iot import DOOR_CLOSING, DOOR_OPENING
 from .const import (
     ACCOUNT_POLL_INTERVAL,
     DEVICE_POLL_INTERVAL,
     DOMAIN,
+    FAST_POLL_INTERVAL,
+    FAST_POLL_WINDOW,
     GUEST_POLL_INTERVAL,
 )
+from .door import Direction, DoorTracker
 from .errors import translated
 from .session import MaveoSession
 
 _LOGGER = logging.getLogger(__name__)
 
+_POLL = timedelta(seconds=DEVICE_POLL_INTERVAL)
+_FAST_POLL = timedelta(seconds=FAST_POLL_INTERVAL)
+
+_DOOR_COMMANDS = {
+    Direction.OPEN: Command.GARAGE_OPEN,
+    Direction.CLOSE: Command.GARAGE_CLOSE,
+    None: Command.GARAGE_STOP,
+}
+
 _READ_COMMANDS = [
-    ("door_position", Command.STATUS, "StoA_s"),
     ("firmware", Command.VERSION, "StoA_v"),
     ("light_on", Command.LIGHT_READ, "StoA_l_r"),
     ("serial", Command.SERIAL, "StoA_serial"),
@@ -52,6 +65,7 @@ _EMPTY: dict[str, Any] = {
     "online": False,
     "is_bluefi": None,
     "door_position": None,
+    "door_travel": None,
     "light_on": None,
     "firmware": None,
     "serial": None,
@@ -161,6 +175,9 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     A cloud or MQTT failure fails the update, so the coordinator logs it once
     and marks entities unavailable. A device that does not answer is reported
     as offline instead, and that change is logged once each way.
+
+    While the door moves, or for a short window after a door command, only the
+    door position is polled, every few seconds, so travels can be timed.
     """
 
     config_entry: ConfigEntry
@@ -177,28 +194,40 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER,
             config_entry=entry,
             name=f"Maveo device {device_id}",
-            update_interval=timedelta(seconds=DEVICE_POLL_INTERVAL),
+            update_interval=_POLL,
         )
         self._session = session
         self.device_id = device_id
         self._reachability = Reachability.UNKNOWN
+        self.door = DoorTracker()
+        self._fast_until: datetime | None = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         await self._session.async_ensure_valid_for_update()
 
-        result = dict(_EMPTY)
+        now = dt_util.utcnow()
+        fast = self.data is not None and self.update_interval == _FAST_POLL
+        result = dict(self.data) if fast else dict(_EMPTY)
         # The cloud "status" endpoint reports the last AWS IoT lifecycle event
         # (e.g. SERVER_INITIATED_DISCONNECT) and can claim the device is
         # disconnected while it still answers over MQTT. So we don't gate on it;
         # we probe the device directly and treat a real MQTT response as online.
         try:
-            result.update(await self._fetch_mqtt_state())
+            result.update(await self._fetch_mqtt_state(position_only=fast))
         except (CloudError, aiohttp.ClientError, TimeoutError, ConnectionError) as err:
+            self._set_poll_interval(now, moving=False)
             raise translated(
                 UpdateFailed, "device_unreachable", err, device_id=self.device_id
             ) from err
 
-        online = result.get("door_position") is not None
+        position = result.get("door_position")
+        result["door_travel"] = self.door.update(position, now)
+        moving = position in (DOOR_OPENING, DOOR_CLOSING)
+        if moving or result["door_travel"] is not None:
+            self._fast_until = None
+        self._set_poll_interval(now, moving=moving)
+
+        online = position is not None
         result["online"] = online
         reachability = Reachability.ONLINE if online else Reachability.OFFLINE
         if reachability is not self._reachability:
@@ -209,6 +238,10 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._reachability = reachability
         self._update_device_registry(result)
         return result
+
+    def _set_poll_interval(self, now: datetime, *, moving: bool) -> None:
+        in_window = self._fast_until is not None and now < self._fast_until
+        self.update_interval = _FAST_POLL if moving or in_window else _POLL
 
     def _update_device_registry(self, data: Mapping[str, Any]) -> None:
         """Keep firmware and serial in the device registry current."""
@@ -225,32 +258,32 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 device.id, sw_version=sw_version, serial_number=serial_number
             )
 
-    async def _fetch_mqtt_state(self) -> dict[str, Any]:
-        updates: dict[str, Any] = {}
+    async def _fetch_mqtt_state(self, *, position_only: bool) -> dict[str, Any]:
+        updates: dict[str, Any] = {"door_position": None}
         async with MaveoIoTClient(
             self._session.http, self._session.auth, self._session.config, self.device_id
         ) as iot:
             await iot.subscribe()
+            await iot.send(Command.STATUS)
+            # BlueFi sends a full state dump before StoA_s (which arrives last).
+            # Connect stick sends only StoA_s.
+            # Any packet before StoA_s means a BlueFi stick.
+            is_bluefi = False
+            for _ in range(15):
+                pkt = await iot.receive(timeout=3.0)
+                if not pkt or "json" not in pkt:
+                    break
+                d = pkt["json"]
+                if "StoA_s" in d:
+                    updates["door_position"] = d["StoA_s"]
+                    break
+                is_bluefi = True
+            updates["is_bluefi"] = is_bluefi
+            if position_only:
+                return updates
+
             for key, cmd, response_key in _READ_COMMANDS:
                 await iot.send(cmd)
-
-                if key == "door_position":
-                    # BlueFi sends a full state dump before StoA_s (which arrives last).
-                    # Connect stick sends only StoA_s.
-                    # Any packet before StoA_s means a BlueFi stick.
-                    is_bluefi = False
-                    for _ in range(15):
-                        pkt = await iot.receive(timeout=3.0)
-                        if not pkt or "json" not in pkt:
-                            break
-                        d = pkt["json"]
-                        if "StoA_s" in d:
-                            updates["door_position"] = d["StoA_s"]
-                            break
-                        is_bluefi = True
-                    updates["is_bluefi"] = is_bluefi
-                    continue
-
                 pkt = await iot.receive(timeout=3.0)
                 if not pkt or "json" not in pkt:
                     continue
@@ -346,8 +379,23 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return updates
 
+    async def async_move_door(self, direction: Direction | None) -> None:
+        """Open, close or (with None) stop the door, then poll it quickly."""
+        await self._async_send(_DOOR_COMMANDS[direction])
+        now = dt_util.utcnow()
+        if direction is not None:
+            self.door.command_sent(direction, now)
+        self._fast_until = now + timedelta(seconds=FAST_POLL_WINDOW)
+        self.update_interval = _FAST_POLL
+        await self.async_request_refresh()
+
     async def async_send_command(self, command: Mapping[str, Any]) -> None:
         """Send an IoT command then schedule a coordinator refresh."""
+        await self._async_send(command)
+        await asyncio.sleep(2)
+        await self.async_request_refresh()
+
+    async def _async_send(self, command: Mapping[str, Any]) -> None:
         await self._session.async_ensure_valid_for_action()
         try:
             async with MaveoIoTClient(
@@ -363,6 +411,3 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise translated(
                 HomeAssistantError, "command_failed", err, device_id=self.device_id
             ) from err
-
-        await asyncio.sleep(2)
-        await self.async_request_refresh()
