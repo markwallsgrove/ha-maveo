@@ -10,10 +10,13 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from .api import AuthError, AuthResult, Config, MaveoClient, login, refresh
+from .api import AuthError, AuthResult, CloudError, Config, MaveoClient, login, refresh
 from .const import CONF_REFRESH_TOKEN
+from .errors import translated
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,6 +70,28 @@ class MaveoSession:
             )
             self.client = MaveoClient(self.http, self.auth, self.config)
             self._store_refresh_token()
+
+    async def async_ensure_valid_for_update(self) -> None:
+        """Renew credentials inside a coordinator update.
+
+        The coordinator starts reauth on ConfigEntryAuthFailed.
+        """
+        try:
+            await self.async_ensure_valid()
+        except AuthError as err:
+            raise translated(ConfigEntryAuthFailed, "auth_failed", err) from err
+        except CloudError as err:
+            raise translated(UpdateFailed, "cloud_unreachable", err) from err
+
+    async def async_ensure_valid_for_action(self) -> None:
+        """Renew credentials before a user action, starting reauth if rejected."""
+        try:
+            await self.async_ensure_valid()
+        except AuthError as err:
+            self._entry.async_start_reauth(self._hass)
+            raise translated(HomeAssistantError, "auth_failed", err) from err
+        except CloudError as err:
+            raise translated(HomeAssistantError, "cloud_unreachable", err) from err
 
     def _store_refresh_token(self) -> None:
         """Persist the refresh token when Cognito has issued a new one."""

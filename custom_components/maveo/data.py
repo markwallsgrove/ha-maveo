@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -50,6 +51,9 @@ class MaveoData:
     session: MaveoSession
     account: MaveoAccountCoordinator
     devices: dict[str, MaveoDevice] = field(default_factory=dict)
+    # Devices missing from the last account poll.
+    missing: set[str] = field(default_factory=set)
+    sync_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _listeners: list[Callable[[MaveoDevice], None]] = field(default_factory=list)
 
     @callback

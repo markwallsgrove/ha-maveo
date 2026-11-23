@@ -12,12 +12,12 @@ from typing import Any
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
     APIError,
-    AuthError,
     CloudError,
     Command,
     Device,
@@ -30,6 +30,7 @@ from .const import (
     DOMAIN,
     GUEST_POLL_INTERVAL,
 )
+from .errors import translated
 from .session import MaveoSession
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,30 +84,19 @@ _EMPTY: dict[str, Any] = {
 }
 
 
+def _hundredths(value: object) -> float | None:
+    """Convert a reading in 0.01 units; None when the stick sent no number."""
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return value / 100.0
+    return None
+
+
 class Reachability(Enum):
     """Whether a device answered its last poll; changes are logged once."""
 
     UNKNOWN = auto()
     ONLINE = auto()
     OFFLINE = auto()
-
-
-async def _async_ensure_session(session: MaveoSession) -> None:
-    """Renew credentials, mapping failures to coordinator exceptions."""
-    try:
-        await session.async_ensure_valid()
-    except AuthError as err:
-        raise ConfigEntryAuthFailed(
-            translation_domain=DOMAIN,
-            translation_key="auth_failed",
-            translation_placeholders={"error": str(err)},
-        ) from err
-    except CloudError as err:
-        raise UpdateFailed(
-            translation_domain=DOMAIN,
-            translation_key="cloud_unreachable",
-            translation_placeholders={"error": str(err)},
-        ) from err
 
 
 class MaveoAccountCoordinator(DataUpdateCoordinator[dict[str, Device]]):
@@ -127,15 +117,11 @@ class MaveoAccountCoordinator(DataUpdateCoordinator[dict[str, Device]]):
         self._session = session
 
     async def _async_update_data(self) -> dict[str, Device]:
-        await _async_ensure_session(self._session)
+        await self._session.async_ensure_valid_for_update()
         try:
             devices = await self._session.client.list_devices()
         except APIError as err:
-            raise UpdateFailed(
-                translation_domain=DOMAIN,
-                translation_key="cloud_unreachable",
-                translation_placeholders={"error": str(err)},
-            ) from err
+            raise translated(UpdateFailed, "cloud_unreachable", err) from err
         return {d.id: d for d in devices}
 
 
@@ -162,15 +148,11 @@ class MaveoGuestCoordinator(DataUpdateCoordinator[list[GuestUser]]):
         self.device_id = device_id
 
     async def _async_update_data(self) -> list[GuestUser]:
-        await _async_ensure_session(self._session)
+        await self._session.async_ensure_valid_for_update()
         try:
             return await self._session.client.list_guest_users(self.device_id)
         except APIError as err:
-            raise UpdateFailed(
-                translation_domain=DOMAIN,
-                translation_key="cloud_unreachable",
-                translation_placeholders={"error": str(err)},
-            ) from err
+            raise translated(UpdateFailed, "cloud_unreachable", err) from err
 
 
 class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -202,7 +184,7 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._reachability = Reachability.UNKNOWN
 
     async def _async_update_data(self) -> dict[str, Any]:
-        await _async_ensure_session(self._session)
+        await self._session.async_ensure_valid_for_update()
 
         result = dict(_EMPTY)
         # The cloud "status" endpoint reports the last AWS IoT lifecycle event
@@ -212,13 +194,8 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             result.update(await self._fetch_mqtt_state())
         except (CloudError, aiohttp.ClientError, TimeoutError, ConnectionError) as err:
-            raise UpdateFailed(
-                translation_domain=DOMAIN,
-                translation_key="device_unreachable",
-                translation_placeholders={
-                    "device_id": self.device_id,
-                    "error": str(err) or type(err).__name__,
-                },
+            raise translated(
+                UpdateFailed, "device_unreachable", err, device_id=self.device_id
             ) from err
 
         online = result.get("door_position") is not None
@@ -230,7 +207,23 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 _LOGGER.warning("Maveo device %s does not respond", self.device_id)
             self._reachability = reachability
+        self._update_device_registry(result)
         return result
+
+    def _update_device_registry(self, data: Mapping[str, Any]) -> None:
+        """Keep firmware and serial in the device registry current."""
+        registry = dr.async_get(self.hass)
+        device = registry.async_get_device_by_identifier(
+            (DOMAIN, self.device_id), self.config_entry.entry_id
+        )
+        if device is None:
+            return
+        sw_version = data.get("firmware") or device.sw_version
+        serial_number = data.get("serial") or device.serial_number
+        if (sw_version, serial_number) != (device.sw_version, device.serial_number):
+            registry.async_update_device(
+                device.id, sw_version=sw_version, serial_number=serial_number
+            )
 
     async def _fetch_mqtt_state(self) -> dict[str, Any]:
         updates: dict[str, Any] = {}
@@ -309,8 +302,12 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         if pkt and "json" in pkt:
                             d = pkt["json"]
                             if "temperature_val" in d:
-                                updates["ht_temperature"] = d["temperature_val"] / 100.0
-                                updates["ht_humidity"] = d["humidity_val"] / 100.0
+                                updates["ht_temperature"] = _hundredths(
+                                    d.get("temperature_val")
+                                )
+                                updates["ht_humidity"] = _hundredths(
+                                    d.get("humidity_val")
+                                )
                                 updates["ht_battery"] = d.get("battery_val")
                                 updates["ht_last_update"] = d.get("last_update")
                                 updates["ht_name"] = d.get("name") or None
@@ -342,19 +339,17 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if pkt and "json" in pkt:
                     d = pkt["json"]
                     if d.get("StoA_weather") == 0:
-                        temp = d.get("temperature")
-                        hum = d.get("humidity")
-                        if temp is not None:
-                            updates["weather_temperature"] = temp / 100.0
-                        if hum is not None:
-                            updates["weather_humidity"] = hum / 100.0
+                        updates["weather_temperature"] = _hundredths(
+                            d.get("temperature")
+                        )
+                        updates["weather_humidity"] = _hundredths(d.get("humidity"))
 
         return updates
 
     async def async_send_command(self, command: Mapping[str, Any]) -> None:
         """Send an IoT command then schedule a coordinator refresh."""
+        await self._session.async_ensure_valid_for_action()
         try:
-            await self._session.async_ensure_valid()
             async with MaveoIoTClient(
                 self._session.http,
                 self._session.auth,
@@ -364,21 +359,9 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await iot.subscribe()
                 await iot.send(command)
                 await iot.receive(timeout=1.0)  # drain any immediate response
-        except AuthError as err:
-            self.config_entry.async_start_reauth(self.hass)
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="auth_failed",
-                translation_placeholders={"error": str(err)},
-            ) from err
         except (CloudError, aiohttp.ClientError, TimeoutError, ConnectionError) as err:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="command_failed",
-                translation_placeholders={
-                    "device_id": self.device_id,
-                    "error": str(err) or type(err).__name__,
-                },
+            raise translated(
+                HomeAssistantError, "command_failed", err, device_id=self.device_id
             ) from err
 
         await asyncio.sleep(2)
