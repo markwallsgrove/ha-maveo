@@ -234,3 +234,44 @@ async def test_service_with_unreachable_cloud_raises(
             blocking=True,
         )
     assert err.value.translation_key == "cloud_unreachable"
+
+
+async def test_service_with_rejected_password_starts_reauth(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    cognito: CognitoPool,
+    garage_device_id: str,
+) -> None:
+    _sign_out_with_new_password(cognito)
+    with pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call(
+            DOMAIN,
+            "remove_guest",
+            {"device_id": garage_device_id, "user_id": "u-1"},
+            blocking=True,
+        )
+    assert err.value.translation_key == "auth_failed"
+    await hass.async_block_till_done()
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert [f["context"]["source"] for f in flows] == [SOURCE_REAUTH]
+
+
+async def test_malformed_stick_replies_are_tolerated(
+    hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick
+) -> None:
+    stick.ht_sensor = {"StoA_sensor": 0, "temperature_val": 2150}
+    stick.replies["AtoS_weather"] = {"StoA_weather": 0, "temperature": "warm"}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=EMAIL,
+        data={CONF_EMAIL: EMAIL, CONF_PASSWORD: PASSWORD, "region": "EU"},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert _state(hass, "sensor", "indoor_temperature").state == "21.5"
+    assert _state(hass, "sensor", "indoor_humidity").state == "unknown"
+    assert _state(hass, "sensor", "weather_temperature").state == "unknown"
+    assert _state(hass, "cover", "cover").state == "closed"

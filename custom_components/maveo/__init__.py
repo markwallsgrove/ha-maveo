@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.core import HomeAssistant, callback
@@ -18,6 +19,7 @@ from .coordinator import (
     MaveoGuestCoordinator,
 )
 from .data import MaveoConfigEntry, MaveoData, MaveoDevice
+from .errors import translated
 from .services import async_register_services
 from .session import MaveoSession
 
@@ -39,26 +41,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: MaveoConfigEntry) -> boo
     try:
         session = await MaveoSession.async_sign_in(hass, entry, config)
     except AuthError as err:
-        raise ConfigEntryAuthFailed(
-            translation_domain=DOMAIN,
-            translation_key="auth_failed",
-            translation_placeholders={"error": str(err)},
-        ) from err
+        raise translated(ConfigEntryAuthFailed, "auth_failed", err) from err
     except CloudError as err:
-        raise ConfigEntryNotReady(
-            translation_domain=DOMAIN,
-            translation_key="cloud_unreachable",
-            translation_placeholders={"error": str(err)},
-        ) from err
+        raise translated(ConfigEntryNotReady, "cloud_unreachable", err) from err
 
     account = MaveoAccountCoordinator(hass, entry, session)
     await account.async_config_entry_first_refresh()
 
     data = MaveoData(session=session, account=account)
-    for device in account.data.values():
-        data.devices[device.id] = await _async_create_device(
-            hass, entry, session, device, first_setup=True
+    devices = await asyncio.gather(
+        *(
+            _async_create_device(hass, entry, session, device, first_setup=True)
+            for device in account.data.values()
         )
+    )
+    data.devices = {device.info.id: device for device in devices}
     entry.runtime_data = data
 
     if not data.devices:
@@ -68,7 +65,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: MaveoConfigEntry) -> boo
 
     @callback
     def _account_updated() -> None:
-        hass.async_create_task(_async_sync_devices(hass, entry), eager_start=True)
+        entry.async_create_background_task(
+            hass, _async_sync_devices(hass, entry), "maveo device sync"
+        )
 
     entry.async_on_unload(account.async_add_listener(_account_updated))
     entry.async_on_unload(data.async_remove_all)
@@ -110,25 +109,34 @@ async def _async_create_device(
 
 
 async def _async_sync_devices(hass: HomeAssistant, entry: MaveoConfigEntry) -> None:
-    """Add sticks that joined the account and remove those that left it."""
+    """Add sticks that joined the account and remove those that left it.
+
+    A stick is removed only when two account polls in a row miss it, so one
+    bad response does not delete devices and their entity settings.
+    """
     data = entry.runtime_data
-    if not data.account.last_update_success:
-        return
-    account_devices = data.account.data
+    async with data.sync_lock:
+        if not data.account.last_update_success:
+            return
+        account_devices = data.account.data
 
-    for device_id in account_devices.keys() - data.devices.keys():
-        device = await _async_create_device(
-            hass, entry, data.session, account_devices[device_id], first_setup=False
-        )
-        data.async_device_added(device)
-
-    registry = dr.async_get(hass)
-    for device_id in data.devices.keys() - account_devices.keys():
-        data.async_device_removed(device_id)
-        device_entry = registry.async_get_device_by_identifier(
-            (DOMAIN, device_id), entry.entry_id
-        )
-        if device_entry is not None:
-            registry.async_update_device(
-                device_entry.id, remove_config_entry_id=entry.entry_id
+        for device_id in account_devices.keys() - data.devices.keys():
+            device = await _async_create_device(
+                hass, entry, data.session, account_devices[device_id], first_setup=False
             )
+            data.async_device_added(device)
+
+        gone = data.devices.keys() - account_devices.keys()
+        remove = gone & data.missing
+        data.missing = gone - remove
+
+        registry = dr.async_get(hass)
+        for device_id in remove:
+            data.async_device_removed(device_id)
+            device_entry = registry.async_get_device_by_identifier(
+                (DOMAIN, device_id), entry.entry_id
+            )
+            if device_entry is not None:
+                registry.async_update_device(
+                    device_entry.id, remove_config_entry_id=entry.entry_id
+                )

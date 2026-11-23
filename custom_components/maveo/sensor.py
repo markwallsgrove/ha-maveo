@@ -26,7 +26,6 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import GuestUser
-from .const import DOMAIN
 from .coordinator import MaveoGuestCoordinator
 from .data import MaveoConfigEntry, MaveoDevice
 from .entity import MaveoEntity, maveo_device_info
@@ -165,7 +164,7 @@ async def async_setup_entry(
     @callback
     def _add(device: MaveoDevice) -> None:
         async_add_entities(MaveoDeviceSensor(device, desc) for desc in DEVICE_SENSORS)
-        _track_guests(hass, device, async_add_entities)
+        _track_guests(hass, entry, device, async_add_entities)
 
     entry.async_on_unload(entry.runtime_data.async_subscribe_devices(_add))
 
@@ -173,12 +172,18 @@ async def async_setup_entry(
 @callback
 def _track_guests(
     hass: HomeAssistant,
+    entry: MaveoConfigEntry,
     device: MaveoDevice,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Add a sensor per guest key and remove it when the key is gone."""
+    """Add a sensor per guest key and remove those whose key is gone.
+
+    Removal checks the entity registry, so keys revoked while Home Assistant
+    was stopped are cleaned up too.
+    """
     tracked: set[str] = set()
     coordinator = device.guests
+    prefix = _guest_unique_id(device.info.id, "")
 
     @callback
     def _on_update() -> None:
@@ -192,13 +197,13 @@ def _track_guests(
             )
             tracked.update(new)
         registry = er.async_get(hass)
-        for user_id in tracked - current:
-            entity_id = registry.async_get_entity_id(
-                "sensor", DOMAIN, _guest_unique_id(device.info.id, user_id)
-            )
-            if entity_id is not None:
-                registry.async_remove(entity_id)
-            tracked.discard(user_id)
+        for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+            if not reg_entry.unique_id.startswith(prefix):
+                continue
+            user_id = reg_entry.unique_id.removeprefix(prefix)
+            if user_id not in current:
+                registry.async_remove(reg_entry.entity_id)
+                tracked.discard(user_id)
 
     device.async_on_remove(coordinator.async_add_listener(_on_update))
     _on_update()

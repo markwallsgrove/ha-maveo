@@ -26,12 +26,11 @@ from .api import (
     RIGHTS_ADMIN,
     RIGHTS_RESTRICTED,
     APIError,
-    AuthError,
-    CloudError,
     build_guest_link,
 )
 from .const import DOMAIN, SERVICE_CREATE_GUEST, SERVICE_REMOVE_GUEST
 from .data import MaveoData, MaveoDevice
+from .errors import translated
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -79,17 +78,6 @@ def _find_device(
     )
 
 
-async def _async_ensure_session(data: MaveoData) -> None:
-    try:
-        await data.session.async_ensure_valid()
-    except (AuthError, CloudError) as err:
-        raise HomeAssistantError(
-            translation_domain=DOMAIN,
-            translation_key="cloud_unreachable",
-            translation_placeholders={"error": str(err)},
-        ) from err
-
-
 def async_register_services(hass: HomeAssistant) -> None:
     """Register the Maveo admin services."""
 
@@ -98,7 +86,7 @@ def async_register_services(hass: HomeAssistant) -> None:
         rights = RIGHTS_ADMIN if call.data["admin"] else RIGHTS_RESTRICTED
 
         data, device = _find_device(hass, call.data[ATTR_DEVICE_ID])
-        await _async_ensure_session(data)
+        await data.session.async_ensure_valid_for_action()
         device_id = device.info.id
 
         try:
@@ -106,11 +94,7 @@ def async_register_services(hass: HomeAssistant) -> None:
                 device_id, ttl_hours * 3600, rights
             )
         except APIError as err:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="guest_create_failed",
-                translation_placeholders={"error": str(err)},
-            ) from err
+            raise translated(HomeAssistantError, "guest_create_failed", err) from err
 
         # Share link carries the garage name and GPS from the device coordinator
         state = device.state.data or {}
@@ -141,16 +125,12 @@ def async_register_services(hass: HomeAssistant) -> None:
         user_id: str = call.data["user_id"]
 
         data, device = _find_device(hass, call.data[ATTR_DEVICE_ID])
-        await _async_ensure_session(data)
+        await data.session.async_ensure_valid_for_action()
 
         try:
             await data.session.client.remove_guest_user(device.info.id, user_id)
         except APIError as err:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="guest_remove_failed",
-                translation_placeholders={"error": str(err)},
-            ) from err
+            raise translated(HomeAssistantError, "guest_remove_failed", err) from err
 
         await device.guests.async_request_refresh()
         _LOGGER.info("Guest key %s removed from device %s", user_id, device.info.id)
