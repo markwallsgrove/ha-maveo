@@ -33,6 +33,7 @@ from .const import (
     FAST_POLL_INTERVAL,
     FAST_POLL_WINDOW,
     GUEST_POLL_INTERVAL,
+    MISSED_POLLS_BEFORE_UNAVAILABLE,
 )
 from .door import Direction, DoorTracker
 from .errors import translated
@@ -172,9 +173,11 @@ class MaveoGuestCoordinator(DataUpdateCoordinator[list[GuestUser]]):
 class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """State of a single Maveo device — MQTT burst-poll.
 
-    A cloud or MQTT failure fails the update, so the coordinator logs it once
-    and marks entities unavailable. A device that does not answer is reported
-    as offline instead, and that change is logged once each way.
+    A failed or unanswered poll keeps the last state until
+    MISSED_POLLS_BEFORE_UNAVAILABLE regular polls in a row have failed. Then a
+    cloud or MQTT failure fails the update, so the coordinator logs it once and
+    marks entities unavailable. A device that does not answer is reported as
+    offline instead, and that change is logged once each way.
 
     While the door moves, or for a short window after a door command, only the
     door position is polled, every few seconds, so travels can be timed.
@@ -201,6 +204,7 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._reachability = Reachability.UNKNOWN
         self.door = DoorTracker()
         self._fast_until: datetime | None = None
+        self._missed_polls = 0
 
     async def _async_update_data(self) -> dict[str, Any]:
         await self._session.async_ensure_valid_for_update()
@@ -216,11 +220,18 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             result.update(await self._fetch_mqtt_state(position_only=fast))
         except (CloudError, aiohttp.ClientError, TimeoutError, ConnectionError) as err:
             self._set_poll_interval(now, moving=False)
+            if (last := self._last_state(fast=fast)) is not None:
+                return last
             raise translated(
                 UpdateFailed, "device_unreachable", err, device_id=self.device_id
             ) from err
 
         position = result.get("door_position")
+        if position is None and (last := self._last_state(fast=fast)) is not None:
+            self._set_poll_interval(now, moving=False)
+            return last
+        if position is not None:
+            self._missed_polls = 0
         result["door_travel"] = self.door.update(position, now)
         moving = position in (DOOR_OPENING, DOOR_CLOSING)
         if moving or result["door_travel"] is not None:
@@ -238,6 +249,16 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._reachability = reachability
         self._update_device_registry(result)
         return result
+
+    def _last_state(self, *, fast: bool) -> dict[str, Any] | None:
+        """Count a missed poll; the last state while it may still be kept."""
+        if not fast:
+            self._missed_polls += 1
+        if self.data is None or not self.data["online"]:
+            return None
+        if self._missed_polls >= MISSED_POLLS_BEFORE_UNAVAILABLE:
+            return None
+        return {**self.data, "door_travel": None}
 
     def _set_poll_interval(self, now: datetime, *, moving: bool) -> None:
         in_window = self._fast_until is not None and now < self._fast_until
@@ -279,7 +300,7 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     break
                 is_bluefi = True
             updates["is_bluefi"] = is_bluefi
-            if position_only:
+            if position_only or updates["door_position"] is None:
                 return updates
 
             for key, cmd, response_key in _READ_COMMANDS:

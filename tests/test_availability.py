@@ -17,11 +17,13 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
+from custom_components.maveo.api import Command
 from custom_components.maveo.api import config as maveo_config
 from custom_components.maveo.const import (
     ACCOUNT_POLL_INTERVAL,
     DEVICE_POLL_INTERVAL,
     DOMAIN,
+    MISSED_POLLS_BEFORE_UNAVAILABLE,
 )
 
 from .fakes import DEVICE_ID, EMAIL, PASSWORD, CognitoPool, FakeMaveoApi, FakeStick
@@ -64,32 +66,57 @@ def _sign_out_with_new_password(cognito: CognitoPool) -> None:
     idp.admin_user_global_sign_out(UserPoolId=cognito.user_pool_id, Username=EMAIL)
 
 
-@pytest.mark.parametrize("failure", ["unreachable", "connack_refused"])
-async def test_unreachable_stick_is_unavailable_then_recovers(
-    hass: HomeAssistant, entry: ConfigEntry, stick: FakeStick, failure: str
-) -> None:
+def _break(stick: FakeStick, failure: str) -> None:
     if failure == "unreachable":
         stick.reachable = False
-    else:
+    elif failure == "connack_refused":
         stick.connack_code = 5
-    await _advance(hass, DEVICE_POLL_INTERVAL + 1)
+    else:
+        stick.replies = {}
+
+
+@pytest.mark.parametrize("failure", ["unreachable", "connack_refused", "silent"])
+async def test_stick_keeps_last_state_until_three_polls_fail(
+    hass: HomeAssistant, entry: ConfigEntry, stick: FakeStick, failure: str
+) -> None:
+    _break(stick, failure)
+    for poll in range(1, MISSED_POLLS_BEFORE_UNAVAILABLE):
+        await _advance(hass, poll * DEVICE_POLL_INTERVAL + 1)
+        assert _state(hass, "cover", "cover").state == "closed"
+        assert _state(hass, "binary_sensor", "connectivity").state == "on"
+
+    await _advance(hass, MISSED_POLLS_BEFORE_UNAVAILABLE * DEVICE_POLL_INTERVAL + 1)
     assert _state(hass, "cover", "cover").state == "unavailable"
-    assert _state(hass, "binary_sensor", "connectivity").state == "unavailable"
+    assert _state(hass, "light", "light").state == "unavailable"
+    connectivity = "off" if failure == "silent" else "unavailable"
+    assert _state(hass, "binary_sensor", "connectivity").state == connectivity
+
+
+@pytest.mark.parametrize("failure", ["unreachable", "connack_refused"])
+async def test_unreachable_stick_recovers(
+    hass: HomeAssistant, entry: ConfigEntry, stick: FakeStick, failure: str
+) -> None:
+    _break(stick, failure)
+    for poll in range(1, MISSED_POLLS_BEFORE_UNAVAILABLE + 1):
+        await _advance(hass, poll * DEVICE_POLL_INTERVAL + 1)
+    assert _state(hass, "cover", "cover").state == "unavailable"
 
     stick.reachable = True
     stick.connack_code = 0
-    await _advance(hass, 2 * DEVICE_POLL_INTERVAL + 1)
+    await _advance(
+        hass, (MISSED_POLLS_BEFORE_UNAVAILABLE + 1) * DEVICE_POLL_INTERVAL + 1
+    )
     assert _state(hass, "cover", "cover").state == "closed"
     assert _state(hass, "binary_sensor", "connectivity").state == "on"
 
 
-async def test_silent_stick_is_offline(
+async def test_silent_stick_is_only_asked_for_the_door(
     hass: HomeAssistant, entry: ConfigEntry, stick: FakeStick
 ) -> None:
     stick.replies = {}
+    stick.commands.clear()
     await _advance(hass, DEVICE_POLL_INTERVAL + 1)
-    assert _state(hass, "binary_sensor", "connectivity").state == "off"
-    assert _state(hass, "light", "light").state == "unavailable"
+    assert stick.commands == [Command.STATUS]
 
 
 async def test_command_to_unreachable_stick_raises(

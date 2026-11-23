@@ -9,6 +9,8 @@ from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 
+from custom_components.maveo.api.iot import DOOR_STOPPED
+
 from .conftest import add_entry_via_flow
 from .fakes import DEVICE_ID, HT_SENSOR_REPLY, FakeMaveoApi, FakeStick
 
@@ -34,6 +36,16 @@ async def test_cover_reports_closed_door(
     assert state.attributes["position_name"] == "Closed"
     assert state.attributes["intermediate_open_configured"] is True
     assert state.attributes["intermediate_close_configured"] is False
+
+
+async def test_stopped_door_is_open(
+    hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick
+) -> None:
+    stick.replies["AtoS_s"] = {"StoA_s": DOOR_STOPPED}
+    await add_entry_via_flow(hass)
+    state = _state(hass, "cover", f"{DEVICE_ID}_cover")
+    assert state.state == "open"
+    assert state.attributes["position_name"] == "Stopped"
 
 
 async def test_light_and_connectivity(hass: HomeAssistant, entry: ConfigEntry) -> None:

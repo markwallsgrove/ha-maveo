@@ -11,7 +11,12 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.maveo.api.iot import DOOR_OPEN, DOOR_OPENING
-from custom_components.maveo.const import DEVICE_POLL_INTERVAL, DOMAIN
+from custom_components.maveo.const import (
+    DEVICE_POLL_INTERVAL,
+    DOMAIN,
+    FAST_POLL_INTERVAL,
+    FAST_POLL_WINDOW,
+)
 
 from .fakes import DEVICE_ID, FakeStick
 
@@ -149,3 +154,16 @@ async def test_failing_stick_stops_fast_polling(
     for _ in range(DEVICE_POLL_INTERVAL // 2):
         await _tick(hass, freezer, 2)
     assert len(stick.connect_headers) == attempts + 1
+
+
+async def test_missed_fast_polls_keep_the_door_state(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    entry: ConfigEntry,
+    stick: FakeStick,
+) -> None:
+    await _door(hass, "open_cover")
+    stick.connack_code = 5
+    for _ in range(FAST_POLL_WINDOW // FAST_POLL_INTERVAL):
+        await _tick(hass, freezer, FAST_POLL_INTERVAL)
+        assert _state(hass, "cover", "cover").state == "opening"
