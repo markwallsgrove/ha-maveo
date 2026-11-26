@@ -5,10 +5,14 @@
 ```bash
 python -m venv .venv
 .venv/bin/pip install -r requirements_test.txt
-.venv/bin/ruff check custom_components tests
-.venv/bin/mypy
-.venv/bin/pytest -q
+.venv/bin/ruff format --check .
+.venv/bin/ruff check .
+.venv/bin/mypy custom_components tests
+.venv/bin/pytest
 ```
+
+CI runs the same commands, plus `hassfest` and the HACS action. Tests must cover every
+line and branch (`--cov-fail-under=100`).
 
 Tests run Home Assistant against fakes at the network boundary: a moto server for
 Cognito, and a local aiohttp server for the REST API and the stick's MQTT-over-WebSocket

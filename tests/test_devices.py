@@ -6,8 +6,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
@@ -30,26 +29,18 @@ async def _advance(hass: HomeAssistant, seconds: int) -> None:
     await hass.async_block_till_done(wait_background_tasks=True)
 
 
-def _device(
-    hass: HomeAssistant, entry: ConfigEntry, device_id: str
-) -> dr.DeviceEntry | None:
-    return dr.async_get(hass).async_get_device_by_identifier(
-        (DOMAIN, device_id), entry.entry_id
-    )
+def _device(hass: HomeAssistant, entry: ConfigEntry, device_id: str) -> dr.DeviceEntry | None:
+    return dr.async_get(hass).async_get_device_by_identifier((DOMAIN, device_id), entry.entry_id)
 
 
-async def test_new_stick_is_added_without_reload(
-    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
-) -> None:
+async def test_new_stick_is_added_without_reload(hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi) -> None:
     cloud.devices.append({"id": SECOND_ID, "name": "Shed", "devicetype": 1})
     await _advance(hass, ACCOUNT_POLL_INTERVAL + 1)
 
     device = _device(hass, entry, SECOND_ID)
     assert device is not None
     assert device.name == "Shed"
-    entity_id = er.async_get(hass).async_get_entity_id(
-        "cover", DOMAIN, f"{SECOND_ID}_cover"
-    )
+    entity_id = er.async_get(hass).async_get_entity_id("cover", DOMAIN, f"{SECOND_ID}_cover")
     assert entity_id is not None
     state = hass.states.get(entity_id)
     assert state is not None
@@ -71,9 +62,7 @@ async def test_stick_missing_from_one_poll_is_kept(
     assert _device(hass, entry, DEVICE_ID) is not None
 
 
-async def test_removed_stick_is_removed(
-    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
-) -> None:
+async def test_removed_stick_is_removed(hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi) -> None:
     cloud.devices.clear()
     await _advance(hass, ACCOUNT_POLL_INTERVAL + 1)
     await _advance(hass, 2 * ACCOUNT_POLL_INTERVAL + 1)
@@ -82,16 +71,23 @@ async def test_removed_stick_is_removed(
     assert not er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
 
 
-async def test_removed_stick_is_no_longer_polled(
+async def test_removed_stick_without_device_entry_is_removed(
     hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
 ) -> None:
-    cloud.guests.append(
-        {"userid": "u-1", "token": "t", "rights": "0", "ttl": "4102444800"}
-    )
+    device = _device(hass, entry, DEVICE_ID)
+    assert device is not None
+    dr.async_get(hass).async_remove_device(device.id)
+    cloud.devices.clear()
+    await _advance(hass, ACCOUNT_POLL_INTERVAL + 1)
+    await _advance(hass, 2 * ACCOUNT_POLL_INTERVAL + 1)
+
+    assert DEVICE_ID not in entry.runtime_data.devices
+
+
+async def test_removed_stick_is_no_longer_polled(hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi) -> None:
+    cloud.guests.append({"userid": "u-1", "token": "t", "rights": "0", "ttl": "4102444800"})
     await _advance(hass, GUEST_POLL_INTERVAL + 1)
-    guest_entity = er.async_get(hass).async_get_entity_id(
-        "sensor", DOMAIN, f"{DEVICE_ID}_guest_u-1"
-    )
+    guest_entity = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, f"{DEVICE_ID}_guest_u-1")
     assert guest_entity is not None
 
     cloud.devices.clear()
@@ -141,18 +137,12 @@ async def test_device_gone_from_account_can_be_removed(
     cloud: FakeMaveoApi,
     hass_ws_client: WebSocketGenerator,
 ) -> None:
-    stale = dr.async_get(hass).async_get_or_create(
-        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "9999")}
-    )
+    stale = dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, identifiers={(DOMAIN, "9999")})
     assert await _remove_device(hass, hass_ws_client, entry, stale.id)
 
 
-async def test_revoked_guest_sensor_is_removed(
-    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
-) -> None:
-    cloud.guests.append(
-        {"userid": "u-1", "token": "t", "rights": "0", "ttl": "4102444800"}
-    )
+async def test_revoked_guest_sensor_is_removed(hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi) -> None:
+    cloud.guests.append({"userid": "u-1", "token": "t", "rights": "0", "ttl": "4102444800"})
     await _advance(hass, GUEST_POLL_INTERVAL + 1)
     registry = er.async_get(hass)
     unique_id = f"{DEVICE_ID}_guest_u-1"
@@ -166,9 +156,7 @@ async def test_revoked_guest_sensor_is_removed(
 async def test_guest_revoked_while_unloaded_is_removed(
     hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
 ) -> None:
-    cloud.guests.append(
-        {"userid": "u-1", "token": "t", "rights": "0", "ttl": "4102444800"}
-    )
+    cloud.guests.append({"userid": "u-1", "token": "t", "rights": "0", "ttl": "4102444800"})
     await _advance(hass, GUEST_POLL_INTERVAL + 1)
     assert await hass.config_entries.async_unload(entry.entry_id)
     cloud.guests.clear()

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import time
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -38,6 +38,8 @@ PARALLEL_UPDATES = 0
 
 @dataclass(frozen=True, kw_only=True)
 class MaveoSensorDescription(SensorEntityDescription):
+    """A stick sensor and where it reads its value."""
+
     data_key: str
     availability_key: str | None = None  # coordinator data key that must be truthy
 
@@ -161,6 +163,8 @@ def _count_opens(value: StatValue, travel: Travel) -> StatValue:
 
 @dataclass(frozen=True, kw_only=True)
 class MaveoDoorStatDescription(SensorEntityDescription):
+    """A door travel statistic and how a travel changes it."""
+
     apply: Callable[[StatValue, Travel], StatValue]
     initial: StatValue = None
 
@@ -214,6 +218,8 @@ async def async_setup_entry(
     entry: MaveoConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
+    """Add the sensors for each stick and its guest keys."""
+
     @callback
     def _add(device: MaveoDevice) -> None:
         async_add_entities(MaveoDeviceSensor(device, desc) for desc in DEVICE_SENSORS)
@@ -243,12 +249,10 @@ def _track_guests(
     def _on_update() -> None:
         if not coordinator.last_update_success:
             return
-        current = {g.user_id for g in coordinator.data or []}
-        new = current - tracked
+        current = {g.user_id: g for g in coordinator.data or []}
+        new = current.keys() - tracked
         if new:
-            async_add_entities(
-                MaveoGuestSensor(device, coordinator, user_id) for user_id in new
-            )
+            async_add_entities(MaveoGuestSensor(device, coordinator, current[user_id]) for user_id in new)
             tracked.update(new)
         registry = er.async_get(hass)
         for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
@@ -272,19 +276,20 @@ class MaveoDeviceSensor(MaveoEntity, SensorEntity):
 
     entity_description: MaveoSensorDescription
 
-    def __init__(
-        self, device: MaveoDevice, description: MaveoSensorDescription
-    ) -> None:
+    def __init__(self, device: MaveoDevice, description: MaveoSensorDescription) -> None:
+        """Attach the sensor to the stick's device."""
         super().__init__(device, description.key)
         self.entity_description = description
 
     @property
     def available(self) -> bool:
+        """Available while the stick answers and has this reading."""
         av_key = self.entity_description.availability_key
         return super().available and (av_key is None or bool(self.data.get(av_key)))
 
     @property
     def native_value(self) -> Any:
+        """The reading, with on/off values as translated states."""
         key = self.entity_description.key
         value = self.data.get(self.entity_description.data_key)
         if value is None:
@@ -299,6 +304,7 @@ class MaveoDeviceSensor(MaveoEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Extra details for the WiFi signal and indoor sensor."""
         key = self.entity_description.key
         if key == "rssi":
             return {
@@ -311,11 +317,7 @@ class MaveoDeviceSensor(MaveoEntity, SensorEntity):
                 if self.data.get(src) is not None
             }
         if key == "ht_sensor":
-            return {
-                attr: self.data[src]
-                for src, attr in _HT_ATTRIBUTES
-                if self.data.get(src) is not None
-            }
+            return {attr: self.data[src] for src, attr in _HT_ATTRIBUTES if self.data.get(src) is not None}
         return None
 
 
@@ -324,14 +326,14 @@ class MaveoDoorStatSensor(MaveoEntity, RestoreSensor):
 
     entity_description: MaveoDoorStatDescription
 
-    def __init__(
-        self, device: MaveoDevice, description: MaveoDoorStatDescription
-    ) -> None:
+    def __init__(self, device: MaveoDevice, description: MaveoDoorStatDescription) -> None:
+        """Attach the statistic to the stick's device."""
         super().__init__(device, description.key)
         self.entity_description = description
         self._value: StatValue = description.initial
 
     async def async_added_to_hass(self) -> None:
+        """Restore the value from before the restart."""
         await super().async_added_to_hass()
         last = await self.async_get_last_sensor_data()
         if last is not None and isinstance(last.native_value, int | float):
@@ -339,6 +341,7 @@ class MaveoDoorStatSensor(MaveoEntity, RestoreSensor):
 
     @property
     def native_value(self) -> StatValue:
+        """The statistic."""
         return self._value
 
     @callback
@@ -355,30 +358,30 @@ class MaveoGuestSensor(CoordinatorEntity[MaveoGuestCoordinator], SensorEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "guest"
 
-    def __init__(
-        self, device: MaveoDevice, coordinator: MaveoGuestCoordinator, user_id: str
-    ) -> None:
+    def __init__(self, device: MaveoDevice, coordinator: MaveoGuestCoordinator, guest: GuestUser) -> None:
+        """Attach the guest key to the stick's device."""
         super().__init__(coordinator)
-        self.user_id = user_id
-        self._attr_unique_id = _guest_unique_id(device.info.id, user_id)
-        self._attr_translation_placeholders = {"guest": user_id[:8]}
+        self.user_id = guest.user_id
+        self._guest = guest
+        self._attr_unique_id = _guest_unique_id(device.info.id, guest.user_id)
+        self._attr_translation_placeholders = {"guest": guest.user_id[:8]}
         self._attr_device_info = maveo_device_info(device)
-
-    def _get_guest(self) -> GuestUser | None:
-        return next(
-            (g for g in (self.coordinator.data or []) if g.user_id == self.user_id),
-            None,
-        )
 
     @property
     def available(self) -> bool:
-        return super().available and self._get_guest() is not None
+        """Available while the key exists."""
+        return super().available and any(g.user_id == self.user_id for g in self.coordinator.data or [])
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Keep the key's latest details."""
+        self._guest = next((g for g in self.coordinator.data or [] if g.user_id == self.user_id), self._guest)
+        super()._handle_coordinator_update()
 
     @property
-    def native_value(self) -> str | None:
-        guest = self._get_guest()
-        if guest is None:
-            return None
+    def native_value(self) -> str:
+        """Time left, or `expired`."""
+        guest = self._guest
         if not guest.ttl.isdigit():
             return "expired"
         remaining = int(guest.ttl) - int(time.time())
@@ -392,9 +395,8 @@ class MaveoGuestSensor(CoordinatorEntity[MaveoGuestCoordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        guest = self._get_guest()
-        if guest is None:
-            return {}
+        """The key's user ID, access level and whether it was used."""
+        guest = self._guest
         attrs: dict[str, Any] = {
             "user_id": guest.user_id,
             "rights": "admin" if guest.rights == "1" else "restricted",
@@ -407,7 +409,5 @@ class MaveoGuestSensor(CoordinatorEntity[MaveoGuestCoordinator], SensorEntity):
         if guest.nametag3:
             attrs["locale"] = guest.nametag3
         if guest.ttl.isdigit():
-            attrs["expires_at"] = datetime.fromtimestamp(
-                int(guest.ttl), tz=UTC
-            ).isoformat()
+            attrs["expires_at"] = datetime.fromtimestamp(int(guest.ttl), tz=UTC).isoformat()
         return attrs

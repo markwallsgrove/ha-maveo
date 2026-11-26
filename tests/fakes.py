@@ -7,12 +7,12 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
+import json
 from typing import Any
 
-import boto3
 from aiohttp import WSMsgType, web
+import boto3
 from mypy_boto3_cognito_idp import CognitoIdentityProviderClient
 
 from custom_components.maveo.api import iot
@@ -33,15 +33,11 @@ class CognitoPool:
 
     def idp(self) -> CognitoIdentityProviderClient:
         """boto3 client for test setup against the moto server."""
-        return boto3.client(
-            "cognito-idp", region_name=AWS_REGION, endpoint_url=self.endpoint_url
-        )
+        return boto3.client("cognito-idp", region_name=AWS_REGION, endpoint_url=self.endpoint_url)
 
     def add_user(self, email: str, password: str = PASSWORD) -> None:
         idp = self.idp()
-        idp.admin_create_user(
-            UserPoolId=self.user_pool_id, Username=email, MessageAction="SUPPRESS"
-        )
+        idp.admin_create_user(UserPoolId=self.user_pool_id, Username=email, MessageAction="SUPPRESS")
         idp.admin_set_user_password(
             UserPoolId=self.user_pool_id,
             Username=email,
@@ -59,9 +55,7 @@ def create_cognito_pool(endpoint_url: str) -> CognitoPool:
         ClientName="maveo-app",
         ExplicitAuthFlows=["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
     )["UserPoolClient"]["ClientId"]
-    identity = boto3.client(
-        "cognito-identity", region_name=AWS_REGION, endpoint_url=endpoint_url
-    )
+    identity = boto3.client("cognito-identity", region_name=AWS_REGION, endpoint_url=endpoint_url)
     identity_pool_id = identity.create_identity_pool(
         IdentityPoolName="maveo",
         AllowUnauthenticatedIdentities=False,
@@ -82,9 +76,7 @@ class FakeMaveoApi:
     """In-memory state behind the fake REST admin endpoint."""
 
     devices: list[dict[str, Any]] = field(
-        default_factory=lambda: [
-            {"id": DEVICE_ID, "name": DEVICE_NAME, "devicetype": 1}
-        ]
+        default_factory=lambda: [{"id": DEVICE_ID, "name": DEVICE_NAME, "devicetype": 1}]
     )
     guests: list[dict[str, str]] = field(default_factory=list)
     requests: list[dict[str, Any]] = field(default_factory=list)
@@ -97,9 +89,7 @@ class FakeMaveoApi:
         self.requests.append(payload)
         self.authorizations.append(request.headers.get("Authorization", ""))
         if self.fail_with is not None:
-            return web.Response(
-                text="secret-guest-token-in-error-body", status=self.fail_with
-            )
+            return web.Response(text="secret-guest-token-in-error-body", status=self.fail_with)
         command = payload["command"]
         if command == "list_device":
             return web.json_response(self.devices)
@@ -164,8 +154,8 @@ HT_SENSOR_REPLY: dict[str, Any] = {
 class FakeStick:
     """Garage sticks reachable over MQTT-over-WebSocket.
 
-    `replies` maps a command key to the stick's answer. `bluefi` sends a
-    state dump before the door status, as a BlueFi stick does. `ht_sensor`
+    `replies` maps a command key to the stick's answer. `bluefi` sends
+    `dump` before the door status, as a BlueFi stick does. `ht_sensor`
     answers the indoor sensor commands as a paired sensor. `reachable=False`
     makes the WebSocket handshake fail, as when AWS IoT is unreachable.
     A door command makes the door report moving for `travel_reads` status
@@ -179,6 +169,7 @@ class FakeStick:
         self.reachable = True
         self.connack_code = 0
         self.bluefi = False
+        self.dump: list[dict[str, Any]] = [{"StoA_l_r": 1}, {"StoA_buzzer_r": 0}]
         self.ht_sensor: dict[str, Any] | None = None
         self.travel_reads = 2
         self.motion: list[int] = []
@@ -214,10 +205,7 @@ class FakeStick:
             device_id = packet["topic"].split("/")[0]
             command: dict[str, Any] = packet["json"]
             self.commands.append(command)
-            return [
-                iot._mqtt_publish_packet(f"{device_id}/rsp", json.dumps(r).encode())
-                for r in self._answer(command)
-            ]
+            return [iot._mqtt_publish_packet(f"{device_id}/rsp", json.dumps(r).encode()) for r in self._answer(command)]
         return []
 
     def _answer(self, command: dict[str, Any]) -> list[dict[str, Any]]:
@@ -234,7 +222,7 @@ class FakeStick:
             position = self.motion.pop(0) if len(self.motion) > 1 else self.motion[0]
             self.replies["AtoS_s"] = {"StoA_s": position}
         if self.bluefi and "AtoS_s" in command and "AtoS_s" in self.replies:
-            return [{"StoA_l_r": 1}, {"StoA_buzzer_r": 0}, self.replies["AtoS_s"]]
+            return [*self.dump, self.replies["AtoS_s"]]
         if self.ht_sensor is not None and "AtoS_sensor" in command:
             if command.get("command") == 0:
                 return [{"StoA_sensor": 0, "command": 0, "error": 0}]

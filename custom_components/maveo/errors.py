@@ -7,9 +7,7 @@ from homeassistant.exceptions import HomeAssistantError
 from .const import DOMAIN
 
 
-def translated[E: HomeAssistantError](
-    cls: type[E], key: str, err: Exception, **placeholders: str
-) -> E:
+def translated[E: HomeAssistantError](cls: type[E], key: str, err: Exception, **placeholders: str) -> E:
     """Build `cls` with the Maveo translation `key` and the error as `{error}`."""
     return cls(
         translation_domain=DOMAIN,

@@ -1,5 +1,4 @@
-"""
-Maveo IoT client: MQTT 3.1.1 over WebSocket to AWS IoT Core, signed with SigV4.
+"""Maveo IoT client: MQTT 3.1.1 over WebSocket to AWS IoT Core, signed with SigV4.
 
 MQTT topic format (confirmed via live testing):
   {device_id}/cmd  — app → device (publish commands here)
@@ -9,12 +8,12 @@ MQTT topic format (confirmed via live testing):
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
+from datetime import UTC, datetime
 import hashlib
 import hmac
 import json
-from collections.abc import Mapping
-from datetime import UTC, datetime
-from typing import Any, Self
+from typing import Any, ClassVar, Self
 
 import aiohttp
 
@@ -28,53 +27,54 @@ from .exceptions import CloudError
 
 
 class Command:
+    """MQTT command payloads the stick understands."""
+
     # Actions
-    LIGHT_ON = {"AtoS_l": 1}
-    LIGHT_OFF = {"AtoS_l": 0}
-    GARAGE_OPEN = {"AtoS_g": 1}  # confirmed live: opens door
-    GARAGE_CLOSE = {"AtoS_g": 2}  # confirmed live: closes door
-    GARAGE_STOP = {"AtoS_g": 0}  # confirmed live: stops door mid-travel
-    GARAGE_VENTILATE = {
-        "AtoS_g": 3
-    }  # ventilation position (which intermediate position is used: conflicting docs)
+    LIGHT_ON: ClassVar[Mapping[str, int]] = {"AtoS_l": 1}
+    LIGHT_OFF: ClassVar[Mapping[str, int]] = {"AtoS_l": 0}
+    GARAGE_OPEN: ClassVar[Mapping[str, int]] = {"AtoS_g": 1}  # confirmed live: opens door
+    GARAGE_CLOSE: ClassVar[Mapping[str, int]] = {"AtoS_g": 2}  # confirmed live: closes door
+    GARAGE_STOP: ClassVar[Mapping[str, int]] = {"AtoS_g": 0}  # confirmed live: stops door mid-travel
+    # Ventilation position; which intermediate position it uses is unclear.
+    GARAGE_VENTILATE: ClassVar[Mapping[str, int]] = {"AtoS_g": 3}
     # Read commands
-    STATUS = {"AtoS_s": 0}  # → StoA_s: door position int
+    STATUS: ClassVar[Mapping[str, int]] = {"AtoS_s": 0}  # → StoA_s: door position int
     #   NOTE: also triggers a full state dump (see docs/iot-mqtt.md):
     #   weather, ventilation, sensor, GPS, WiFi, ime_learn — StoA_s arrives last
-    VERSION = {"AtoS_v": 0}  # → StoA_v: firmware version string (e.g. "1.2.0")
-    LIGHT_READ = {"AtoS_l_r": 0}  # → StoA_l_r: light state (0=off, 1=on)
-    SERIAL = {"AtoS_get_serial": 0}  # → StoA_serial: serial number string
-    NAME_READ = {"AtoS_name_r": 0}  # → StoA_name_r: device name string
-    TTC_READ = {"AtoS_ttc_r": 0}  # → StoA_ttc_r: time-to-close minutes (0=disabled)
-    BUZZER_READ = {"AtoS_buzzer_r": 0}  # → StoA_buzzer_r: buzzer state string
-    GPS_READ = {"AtoS_gps_req": 0}  # → StoA_gps: {lat, lng} or 0 if unavailable
-    WIFI_READ = {"AtoS_wifi_ap": 0}  # → StoA_wifi_ap: {ssid, ip, mac, rssi, error}
+    VERSION: ClassVar[Mapping[str, int]] = {"AtoS_v": 0}  # → StoA_v: firmware version string (e.g. "1.2.0")
+    LIGHT_READ: ClassVar[Mapping[str, int]] = {"AtoS_l_r": 0}  # → StoA_l_r: light state (0=off, 1=on)
+    SERIAL: ClassVar[Mapping[str, int]] = {"AtoS_get_serial": 0}  # → StoA_serial: serial number string
+    NAME_READ: ClassVar[Mapping[str, int]] = {"AtoS_name_r": 0}  # → StoA_name_r: device name string
+    TTC_READ: ClassVar[Mapping[str, int]] = {"AtoS_ttc_r": 0}  # → StoA_ttc_r: time-to-close minutes (0=disabled)
+    BUZZER_READ: ClassVar[Mapping[str, int]] = {"AtoS_buzzer_r": 0}  # → StoA_buzzer_r: buzzer state string
+    GPS_READ: ClassVar[Mapping[str, int]] = {"AtoS_gps_req": 0}  # → StoA_gps: {lat, lng} or 0 if unavailable
+    WIFI_READ: ClassVar[Mapping[str, int]] = {"AtoS_wifi_ap": 0}  # → StoA_wifi_ap: {ssid, ip, mac, rssi, error}
     # Commands found in binary / confirmed in STATUS dump (payload value TBC)
-    SENSOR_PRESENCE = {
+    SENSOR_PRESENCE: ClassVar[Mapping[str, int]] = {
         "AtoS_sensor": 0,
         "command": 0,
     }  # → StoA_sensor: {error} — error:2=no sensor, error:0=paired
-    SENSOR_READINGS = {
+    SENSOR_READINGS: ClassVar[Mapping[str, int]] = {
         "AtoS_sensor": 0,
         "command": 7,
     }  # → StoA_sensor: {temperature_val, humidity_val, battery_val, last_update}
     #   units: temperature_val 0.01°C, humidity_val 0.01% (unconfirmed — no live sensor)
     #   produces two responses: data packet + {"state":9} (discard)
-    SENSOR_METADATA = {
+    SENSOR_METADATA: ClassVar[Mapping[str, int]] = {
         "AtoS_sensor": 0,
         "command": 6,
     }  # → StoA_sensor: {name, manufacturer, model, serial_num, fw/sw/hw_rev}
-    SENSOR_FULL = {
+    SENSOR_FULL: ClassVar[Mapping[str, int]] = {
         "AtoS_sensor": 0,
         "command": 8,
     }  # → StoA_sensor: readings + metadata combined (commands 6+7)
-    VENTILATION_READ = {
+    VENTILATION_READ: ClassVar[Mapping[str, int]] = {
         "AtoS_ventilation": 0
     }  # → StoA_ventilation: runtime state + config
-    WEATHER_READ = {
+    WEATHER_READ: ClassVar[Mapping[str, int]] = {
         "AtoS_weather": 0
     }  # → StoA_weather: {humidity (0.01%), temperature (0.01°C), last_update}
-    IME_LEARN_READ = {
+    IME_LEARN_READ: ClassVar[Mapping[str, int]] = {
         "AtoS_req_ime_learn": 0
     }  # → StoA_ime_learn: {open, close} (1=learned)
 
@@ -86,12 +86,8 @@ DOOR_OPENING = 1
 DOOR_CLOSING = 2
 DOOR_OPEN = 3
 DOOR_CLOSED = 4
-DOOR_INTERMEDIATE_OPEN = (
-    5  # stopped at the Intermediate Open position (higher partial-open)
-)
-DOOR_INTERMEDIATE_CLOSED = (
-    6  # stopped at the Intermediate Closed position (lower partial-open)
-)
+DOOR_INTERMEDIATE_OPEN = 5  # stopped at the Intermediate Open position (higher partial-open)
+DOOR_INTERMEDIATE_CLOSED = 6  # stopped at the Intermediate Closed position (lower partial-open)
 
 DOOR_POSITION_NAMES = {
     DOOR_STOPPED: "Stopped",
@@ -113,11 +109,9 @@ def _hmac_sha256(key: bytes, data: str) -> bytes:
     return hmac.new(key, data.encode(), hashlib.sha256).digest()
 
 
-def _sigv4_headers(
-    hostname: str, region: str, access_key: str, secret_key: str, session_token: str
-) -> dict[str, str]:
-    """
-    Build AWS SigV4 Authorization headers for MQTT-over-WebSocket.
+def _sigv4_headers(hostname: str, region: str, access_key: str, secret_key: str, session_token: str) -> dict[str, str]:
+    """Build AWS SigV4 Authorization headers for MQTT-over-WebSocket.
+
     Uses header-based authentication (not query params).
     Service: iotdata  (discovered working service name for this endpoint).
     """
@@ -130,11 +124,7 @@ def _sigv4_headers(
     scope = f"{date_stamp}/{region}/{service}/aws4_request"
     signed_headers = "host;x-amz-date;x-amz-security-token"
 
-    canonical_headers = (
-        f"host:{hostname}\n"
-        f"x-amz-date:{amz_date}\n"
-        f"x-amz-security-token:{session_token}\n"
-    )
+    canonical_headers = f"host:{hostname}\nx-amz-date:{amz_date}\nx-amz-security-token:{session_token}\n"
     canonical_request = "\n".join(
         [
             "GET",
@@ -161,11 +151,7 @@ def _sigv4_headers(
     k_signing = _hmac_sha256(k_service, "aws4_request")
     signature = _hmac_sha256(k_signing, string_to_sign).hex()
 
-    auth = (
-        f"{algorithm} Credential={access_key}/{scope},"
-        f" SignedHeaders={signed_headers},"
-        f" Signature={signature}"
-    )
+    auth = f"{algorithm} Credential={access_key}/{scope}, SignedHeaders={signed_headers}, Signature={signature}"
 
     return {
         "Host": hostname,
@@ -231,8 +217,8 @@ def _mqtt_publish_packet(topic: str, payload: bytes) -> bytes:
 
 
 def _decode_remaining_length(data: bytes) -> tuple[int, int]:
-    """
-    Decode the MQTT variable-length remaining-length field starting at data[1].
+    """Decode the MQTT variable-length remaining-length field starting at data[1].
+
     Returns (value, number_of_bytes_consumed).
     """
     value = 0
@@ -295,14 +281,15 @@ def _parse_mqtt_packet(data: bytes) -> dict[str, Any]:
     return result
 
 
+_HANDSHAKE_TIMEOUT = 10
+
 # ---------------------------------------------------------------------------
 # IoT client
 # ---------------------------------------------------------------------------
 
 
 class MaveoIoTClient:
-    """
-    MQTT over WebSocket client for one Maveo device.
+    """MQTT over WebSocket client for one Maveo device.
 
     Usage:
         async with MaveoIoTClient(session, auth, config, device_id) as client:
@@ -321,20 +308,26 @@ class MaveoIoTClient:
         auth: AuthResult,
         config: Config,
         device_id: str,
+        *,
+        reply_timeout: float = 5.0,
     ) -> None:
+        """Prepare a client; `receive` waits up to `reply_timeout` seconds for a packet."""
         self._session = session
         self._auth = auth
         self._config = config
         self._device_id = device_id
+        self._reply_timeout = reply_timeout
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._cmd_topic = f"{device_id}/cmd"
         self._rsp_topic = f"{device_id}/rsp"
 
     async def __aenter__(self) -> Self:
+        """Connect, and close again when the block ends."""
         await self.connect()
         return self
 
     async def __aexit__(self, *_: object) -> None:
+        """Close the connection."""
         await self.close()
 
     async def connect(self) -> None:
@@ -351,11 +344,10 @@ class MaveoIoTClient:
         )
         try:
             async with asyncio.timeout(15):
-                self._ws = await self._session.ws_connect(
-                    self._config.iot_url, protocols=("mqtt",), headers=headers
-                )
+                self._ws = await self._session.ws_connect(self._config.iot_url, protocols=("mqtt",), headers=headers)
             await self._ws.send_bytes(_mqtt_connect_packet(self._device_id))
-            pkt = await self._recv_packet(timeout=10)
+            async with asyncio.timeout(_HANDSHAKE_TIMEOUT):
+                pkt = await self._recv_packet()
         except (aiohttp.ClientError, TimeoutError, ConnectionError) as err:
             await self.close()
             raise CloudError(f"MQTT connect failed ({type(err).__name__})") from err
@@ -368,20 +360,20 @@ class MaveoIoTClient:
         """Subscribe to a topic (default {device_id}/rsp) and return the SUBACK."""
         topic = topic or self._rsp_topic
         await self._connection().send_bytes(_mqtt_subscribe_packet(topic, 1))
-        return await self._recv_packet(timeout=10)
+        async with asyncio.timeout(_HANDSHAKE_TIMEOUT):
+            return await self._recv_packet()
 
     async def send(self, command: Mapping[str, Any]) -> None:
         """Publish a command to {device_id}/cmd."""
         payload = json.dumps(command).encode()
-        await self._connection().send_bytes(
-            _mqtt_publish_packet(self._cmd_topic, payload)
-        )
+        await self._connection().send_bytes(_mqtt_publish_packet(self._cmd_topic, payload))
 
-    async def receive(self, timeout: float = 5.0) -> dict[str, Any] | None:
+    async def receive(self) -> dict[str, Any] | None:
         """Wait for an MQTT packet. Returns None on timeout or close."""
         try:
-            return await self._recv_packet(timeout)
-        except (TimeoutError, ConnectionError):
+            async with asyncio.timeout(self._reply_timeout):
+                return await self._recv_packet()
+        except TimeoutError, ConnectionError:
             return None
 
     def _connection(self) -> aiohttp.ClientWebSocketResponse:
@@ -389,14 +381,15 @@ class MaveoIoTClient:
             raise ConnectionError("Not connected")
         return self._ws
 
-    async def _recv_packet(self, timeout: float) -> dict[str, Any]:
-        msg = await self._connection().receive(timeout=timeout)
+    async def _recv_packet(self) -> dict[str, Any]:
+        msg = await self._connection().receive()
         if msg.type is not aiohttp.WSMsgType.BINARY:
             raise ConnectionError(f"Expected a binary MQTT frame, got {msg.type.name}")
         data: bytes = msg.data
         return _parse_mqtt_packet(data)
 
     async def close(self) -> None:
+        """Close the WebSocket, if open."""
         if self._ws is not None:
             await self._ws.close()
             self._ws = None

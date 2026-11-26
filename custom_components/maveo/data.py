@@ -30,7 +30,6 @@ class MaveoDevice:
     state: MaveoDeviceCoordinator
     guests: MaveoGuestCoordinator
     _teardown: list[CALLBACK_TYPE] = field(default_factory=list)
-    removed: bool = False
 
     @callback
     def async_on_remove(self, func: CALLBACK_TYPE) -> None:
@@ -39,15 +38,15 @@ class MaveoDevice:
 
     @callback
     def async_remove(self) -> None:
-        if self.removed:
-            return
-        self.removed = True
+        """Run the teardown callbacks once."""
         while self._teardown:
             self._teardown.pop()()
 
 
 @dataclass
 class MaveoData:
+    """Runtime data of a config entry: the session, the account and its sticks."""
+
     session: MaveoSession
     account: MaveoAccountCoordinator
     devices: dict[str, MaveoDevice] = field(default_factory=dict)
@@ -57,9 +56,7 @@ class MaveoData:
     _listeners: list[Callable[[MaveoDevice], None]] = field(default_factory=list)
 
     @callback
-    def async_subscribe_devices(
-        self, add: Callable[[MaveoDevice], None]
-    ) -> CALLBACK_TYPE:
+    def async_subscribe_devices(self, add: Callable[[MaveoDevice], None]) -> CALLBACK_TYPE:
         """Call `add` for every current device and each device added later."""
         for device in self.devices.values():
             add(device)
@@ -73,16 +70,19 @@ class MaveoData:
 
     @callback
     def async_device_added(self, device: MaveoDevice) -> None:
+        """Track a new stick and tell the platforms about it."""
         self.devices[device.info.id] = device
         for add in list(self._listeners):
             add(device)
 
     @callback
     def async_device_removed(self, device_id: str) -> None:
+        """Forget a stick that left the account."""
         self.devices.pop(device_id).async_remove()
 
     @callback
     def async_remove_all(self) -> None:
+        """Tear down every stick."""
         for device in self.devices.values():
             device.async_remove()
 

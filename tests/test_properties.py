@@ -12,8 +12,7 @@ from urllib.parse import parse_qs
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
-from hypothesis import given
-from hypothesis import strategies as st
+from hypothesis import given, strategies as st
 
 from custom_components.maveo.api import GuestUser, build_guest_link, iot
 
@@ -45,6 +44,7 @@ def _decrypt(link: str) -> dict[str, str]:
     lng=st.floats(min_value=-180, max_value=180, allow_nan=False),
 )
 def test_guest_link_round_trips(
+    *,
     user_id: str,
     token: str,
     rights: str,
@@ -55,9 +55,7 @@ def test_guest_link_round_trips(
     lng: float,
 ) -> None:
     guest = GuestUser(user_id=user_id, token=token, rights=rights, ttl=ttl)
-    link = build_guest_link(
-        guest, device_id, name, location_name=name, latitude=lat, longitude=lng
-    )
+    link = build_guest_link(guest, device_id, name, location_name=name, latitude=lat, longitude=lng)
 
     assert link.startswith("https://deeplink.marantec-cloud.de?data=")
     fields = _decrypt(link)

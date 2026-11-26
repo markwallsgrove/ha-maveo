@@ -30,6 +30,8 @@ async def async_setup_entry(
     entry: MaveoConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
+    """Add a garage door for each stick."""
+
     @callback
     def _add(device: MaveoDevice) -> None:
         async_add_entities([MaveoGarageDoor(device)])
@@ -41,36 +43,34 @@ class MaveoGarageDoor(MaveoEntity, CoverEntity):
     """Maveo garage door."""
 
     _attr_device_class = CoverDeviceClass.GARAGE
-    _attr_supported_features = (
-        CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
-    )
+    _attr_supported_features = CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
     _attr_translation_key = "garage_door"
 
     def __init__(self, device: MaveoDevice) -> None:
+        """Attach the door to the stick's device."""
         super().__init__(device, "cover")
 
     @property
-    def is_closed(self) -> bool | None:
-        pos = self.data.get("door_position")
-        if pos is None:
-            return None
-        return bool(pos == DOOR_CLOSED)
+    def is_closed(self) -> bool:
+        """Whether the door is closed."""
+        return bool(self.data.get("door_position") == DOOR_CLOSED)
 
     @property
     def is_opening(self) -> bool:
+        """Whether the door is opening."""
         return bool(self.data.get("door_position") == DOOR_OPENING)
 
     @property
     def is_closing(self) -> bool:
+        """Whether the door is closing."""
         return bool(self.data.get("door_position") == DOOR_CLOSING)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        """The position name and which intermediate positions are set up."""
         pos = self.data.get("door_position")
         attrs: dict[str, Any] = {
-            "position_name": DOOR_POSITION_NAMES.get(pos, "unknown")
-            if isinstance(pos, int)
-            else "unknown"
+            "position_name": DOOR_POSITION_NAMES.get(pos, "unknown") if isinstance(pos, int) else "unknown"
         }
         if self.data.get("ime_open") is not None:
             attrs["intermediate_open_configured"] = self.data["ime_open"]
@@ -78,10 +78,13 @@ class MaveoGarageDoor(MaveoEntity, CoverEntity):
         return attrs
 
     async def async_open_cover(self, **kwargs: Any) -> None:
+        """Open the door."""
         await self.coordinator.async_move_door(Direction.OPEN)
 
     async def async_close_cover(self, **kwargs: Any) -> None:
+        """Close the door."""
         await self.coordinator.async_move_door(Direction.CLOSE)
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
+        """Stop the door."""
         await self.coordinator.async_move_door(None)

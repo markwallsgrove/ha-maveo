@@ -31,14 +31,17 @@ class MaveoEntity(CoordinatorEntity[MaveoDeviceCoordinator]):
     _attr_has_entity_name = True
 
     def __init__(self, device: MaveoDevice, key: str) -> None:
+        """Attach the entity to the stick's device, unique by `key`."""
         super().__init__(device.state)
         self._attr_unique_id = f"{device.info.id}_{key}"
         self._attr_device_info = maveo_device_info(device)
 
     @property
     def data(self) -> dict[str, Any]:
+        """The stick's last state; empty before the first poll."""
         return self.coordinator.data or {}
 
     @property
     def available(self) -> bool:
+        """Available while the stick answers."""
         return super().available and bool(self.data.get("online"))

@@ -27,8 +27,7 @@ def build_guest_link(
     latitude: float = 0.0,
     longitude: float = 0.0,
 ) -> str:
-    """
-    Return a Maveo deep link that imports the guest key into the Maveo app.
+    """Return a Maveo deep link that imports the guest key into the Maveo app.
 
     The payload is AES-256-CBC encrypted with the app's fixed key.  The
     base64 IV is followed directly by the base64 ciphertext in `data`.

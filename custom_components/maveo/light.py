@@ -21,6 +21,8 @@ async def async_setup_entry(
     entry: MaveoConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
+    """Add a garage light for each stick."""
+
     @callback
     def _add(device: MaveoDevice) -> None:
         async_add_entities([MaveoGarageLight(device)])
@@ -33,18 +35,22 @@ class MaveoGarageLight(MaveoEntity, LightEntity):
 
     _attr_translation_key = "garage_light"
     _attr_color_mode = ColorMode.ONOFF
-    _attr_supported_color_modes = {ColorMode.ONOFF}
 
     def __init__(self, device: MaveoDevice) -> None:
+        """Attach the light to the stick's device."""
         super().__init__(device, "light")
+        self._attr_supported_color_modes = {ColorMode.ONOFF}
 
     @property
     def is_on(self) -> bool | None:
+        """Whether the light is on; None before the first reading."""
         val = self.data.get("light_on")
         return bool(val) if val is not None else None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn the light on."""
         await self.coordinator.async_send_command(Command.LIGHT_ON)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn the light off."""
         await self.coordinator.async_send_command(Command.LIGHT_OFF)

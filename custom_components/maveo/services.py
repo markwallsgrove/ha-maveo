@@ -6,10 +6,9 @@ admin-only and the link is only returned in the service response.
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
+import logging
 
-import probatio
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import (
     HomeAssistant,
@@ -18,9 +17,9 @@ from homeassistant.core import (
     SupportsResponse,
 )
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.helpers.service import async_register_admin_service
+import probatio
 
 from .api import (
     RIGHTS_ADMIN,
@@ -39,9 +38,7 @@ ATTR_DEVICE_ID = "device_id"
 _CREATE_SCHEMA = probatio.Schema(
     {
         probatio.Required(ATTR_DEVICE_ID): cv.string,
-        probatio.Optional("ttl_hours", default=24): probatio.All(
-            probatio.Coerce(int), probatio.Range(min=1, max=720)
-        ),
+        probatio.Optional("ttl_hours", default=24): probatio.All(probatio.Coerce(int), probatio.Range(min=1, max=720)),
         probatio.Optional("admin", default=False): cv.boolean,
     }
 )
@@ -54,18 +51,13 @@ _REMOVE_SCHEMA = probatio.Schema(
 )
 
 
-def _find_device(
-    hass: HomeAssistant, ha_device_id: str
-) -> tuple[MaveoData, MaveoDevice]:
+def _find_device(hass: HomeAssistant, ha_device_id: str) -> tuple[MaveoData, MaveoDevice]:
     """Resolve a Home Assistant device ID to its loaded Maveo device."""
     device_entry = dr.async_get(hass).async_get(ha_device_id)
     if device_entry is not None:
         maveo_ids = {i for d, i in device_entry.identifiers if d == DOMAIN}
         for entry in hass.config_entries.async_entries(DOMAIN):
-            if (
-                entry.state is not ConfigEntryState.LOADED
-                or entry.entry_id not in device_entry.config_entries
-            ):
+            if entry.state is not ConfigEntryState.LOADED or entry.entry_id not in device_entry.config_entries:
                 continue
             data: MaveoData = entry.runtime_data
             for maveo_id in maveo_ids:
@@ -90,9 +82,7 @@ def async_register_services(hass: HomeAssistant) -> None:
         device_id = device.info.id
 
         try:
-            guest = await data.session.client.add_guest_user(
-                device_id, ttl_hours * 3600, rights
-            )
+            guest = await data.session.client.add_guest_user(device_id, ttl_hours * 3600, rights)
         except APIError as err:
             raise translated(HomeAssistantError, "guest_create_failed", err) from err
 
@@ -101,9 +91,7 @@ def async_register_services(hass: HomeAssistant) -> None:
         lat: float = state.get("gps_lat") or 0.0
         lng: float = state.get("gps_lng") or 0.0
         name: str = state.get("device_name") or device.info.name
-        link = build_guest_link(
-            guest, device_id, name, location_name=name, latitude=lat, longitude=lng
-        )
+        link = build_guest_link(guest, device_id, name, location_name=name, latitude=lat, longitude=lng)
 
         await device.guests.async_request_refresh()
 
@@ -114,11 +102,7 @@ def async_register_services(hass: HomeAssistant) -> None:
             rights,
             ttl_hours,
         )
-        expires_at = (
-            datetime.fromtimestamp(int(guest.ttl), tz=UTC).isoformat()
-            if guest.ttl.isdigit()
-            else None
-        )
+        expires_at = datetime.fromtimestamp(int(guest.ttl), tz=UTC).isoformat() if guest.ttl.isdigit() else None
         return {"user_id": guest.user_id, "link": link, "expires_at": expires_at}
 
     async def _remove_guest(call: ServiceCall) -> None:
@@ -143,6 +127,4 @@ def async_register_services(hass: HomeAssistant) -> None:
         schema=_CREATE_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
-    async_register_admin_service(
-        hass, DOMAIN, SERVICE_REMOVE_GUEST, _remove_guest, schema=_REMOVE_SCHEMA
-    )
+    async_register_admin_service(hass, DOMAIN, SERVICE_REMOVE_GUEST, _remove_guest, schema=_REMOVE_SCHEMA)

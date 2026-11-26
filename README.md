@@ -1,20 +1,27 @@
-# Maveo for Home Assistant
+# 🚗 Maveo for Home Assistant
 
-[![HA Version](https://img.shields.io/badge/Home%20Assistant-2026.10%2B-blue)](https://www.home-assistant.io/)
-[![License: MIT](https://img.shields.io/github/license/markwallsgrove/ha-maveo)](https://opensource.org/license/mit)
+**Open, close and watch your Marantec maveo garage door from Home Assistant.**
+
+[![HACS][hacsbadge]][hacs]
+[![Home Assistant][ha-shield]][ha]
+[![Quality scale][quality-shield]][quality]
+[![License][license-shield]][license]
+
+[![Project Maintenance][maintenance-shield]][profile]
+[![BuyMeCoffee][buymecoffeebadge]][buymecoffee]
 
 Open, close and stop your **Marantec maveo** garage door, switch its light, and see
 what the door is doing, all from Home Assistant.
 
+> [!IMPORTANT]
 > **Unofficial.** This is a community project. It is not made, endorsed or supported
 > by Marantec. Marantec and maveo are trademarks of their owners.
 
+> [!NOTE]
 > **Needs the internet.** Everything goes through the Marantec cloud, using your maveo
 > account. Nothing works while your internet or the Marantec cloud is down.
 
----
-
-## Supported devices
+## 📟 Supported devices
 
 - Marantec **Maveo Connect** stick
 - Marantec **Maveo BlueFi** stick, including the optional indoor temperature/humidity (H+T) sensor
@@ -22,7 +29,7 @@ what the door is doing, all from Home Assistant.
 Any stick on your Maveo account is added. Sticks added to or removed from the account
 later are picked up within 10 minutes, without a restart.
 
-## Supported functions
+## ✨ Supported functions
 
 | Feature | What you get |
 |---------|--------------|
@@ -40,23 +47,25 @@ later are picked up within 10 minutes, without a restart.
 Guest key sensors appear and disappear as keys are created or revoked. The WiFi signal
 and stick type sensors are off by default; turn them on from the device page.
 
-## Use cases
+## 💡 Use cases
 
 - See whether the garage is open from anywhere, and close it from the dashboard.
 - Close the garage automatically at night or when everybody leaves.
 - Give a visitor or tradesperson a time-limited key from a script.
 - Spot a door that gets slower over time, an early sign of wear.
 
----
+## 📦 Installation
 
-## Installation
+Maveo installs through [HACS][hacs] as a custom repository:
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=markwallsgrove&repository=ha-maveo)
 
 1. Open **Marketplace** (or HACS) → three-dot menu → **Custom repositories**.
 2. Add `https://github.com/markwallsgrove/ha-maveo` with the category **Integration**.
 3. Find **Maveo**, download it, and restart Home Assistant.
 4. Go to **Settings → Devices & services → Add integration** and search for **Maveo**.
 
-### Configuration parameters
+### ⚙️ Configuration parameters
 
 | Parameter | Description |
 |-----------|-------------|
@@ -73,7 +82,7 @@ for example after you change it.
 Home Assistant stores your maveo password unencrypted in its configuration folder, as it
 does for other cloud integrations. Keep backups of that folder private.
 
-### Removal
+### 🗑️ Removal
 
 1. **Settings → Devices & services → Maveo** → three-dot menu → **Delete**.
 2. Optionally remove **Maveo** from the Marketplace (or HACS) and restart Home Assistant.
@@ -81,9 +90,7 @@ does for other cloud integrations. Keep backups of that folder private.
 Deleting the entry does not change anything on your Maveo account. Guest keys stay
 valid until they expire or you revoke them in the Maveo app.
 
----
-
-## Actions
+## 🎬 Actions
 
 Both actions are admin only and take the garage **device** (device picker in the UI).
 
@@ -108,7 +115,7 @@ Revokes a guest key immediately.
 | `device_id` | ✓ | The Maveo garage device |
 | `user_id` | ✓ | Guest UUID (`user_id` attribute of the guest sensor) |
 
-## Examples
+## 📝 Examples
 
 Close the garage at 22:00 if it is open:
 
@@ -144,15 +151,13 @@ script:
           message: "Garage key: {{ guest.link }} (valid until {{ guest.expires_at }})"
 ```
 
----
-
-## Data updates
+## 🔄 Data updates
 
 The door, light and sensors update every 30 seconds. While the door moves, and for
 20 seconds after you open, close or stop it, the door updates every 2 seconds. Guest keys
 update every minute, and new or removed sticks on your account appear within 10 minutes.
 
-## Known limitations
+## ⚠️ Known limitations
 
 - A door moved with a remote or wall button shows up within about 30 seconds.
 - Opening and closing times are accurate to about 2 seconds. A door that was never seen
@@ -160,7 +165,7 @@ update every minute, and new or removed sticks on your account appear within 10 
 - Accounts with two-step sign-in are not supported.
 - Indoor sensor readings have not been tested with a real sensor.
 
-## Troubleshooting
+## 🔧 Troubleshooting
 
 - **Asked to sign in again**: Maveo rejected the stored password. Enter the current one.
 - **Entities unavailable**: the cloud or the stick did not answer three checks in a row
@@ -176,7 +181,7 @@ logger:
     custom_components.maveo: debug
 ```
 
-## Upgrading from 0.x
+## ⬆️ Upgrading from 0.x
 
 1.0 has breaking changes:
 
@@ -186,11 +191,20 @@ logger:
   numeric Maveo device ID.
 - The WiFi signal and stick type sensors are disabled by default for new installs.
 
-## Contributing
+## 🏆 Quality
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Maveo meets Platinum, the highest tier of Home Assistant's [integration quality scale][quality]. Home Assistant grades only core integrations, so this is our own check.
 
-## Credits
+- Every quality scale rule is tracked in `quality_scale.yaml`. A test checks that each rule is done or exempt with a reason, and that the code backs the done rules. `hassfest` and the HACS action run on every PR.
+- Fully typed, checked with mypy in strict mode.
+- Fully asynchronous.
+- Every line and branch covered by tests, including property-based tests with [Hypothesis](https://hypothesis.readthedocs.io).
+
+## 🤝 Contributing
+
+Ideas, questions and bug reports are welcome. [Open an issue](https://github.com/markwallsgrove/ha-maveo/issues). See [CONTRIBUTING.md](CONTRIBUTING.md) to work on the code.
+
+## 🙏 Credits
 
 This integration builds on [ha-maveo](https://github.com/yoda-jm/ha-maveo) by Vincent
 Le Ligeour ([@yoda-jm](https://github.com/yoda-jm)). He worked out how the maveo app talks
@@ -203,4 +217,27 @@ Earlier community projects also worked with the maveo cloud:
 - [ha-maveo-cloud](https://github.com/thtemme/ha-maveo-cloud) by thtemme (Home Assistant integration, 2025)
 - [maveo-stick-node](https://github.com/ebertmi/maveo-stick-node) by ebertmi (Node.js library, 2026)
 
-It talks to the Marantec cloud the same way the maveo app does. Use it at your own risk.
+## 📄 License
+
+[MIT][license]. Use it, copy it, change it.
+
+## ☕ Support
+
+Maveo for Home Assistant is a free side project. If it saves you a trip back to check the garage, you can [buy me a coffee][buymecoffee].
+
+---
+
+This integration is not made by or linked to Marantec or Home Assistant. It talks to the Marantec cloud the same way the maveo app does. Use it at your own risk.
+
+[hacs]: https://hacs.xyz
+[hacsbadge]: https://img.shields.io/badge/HACS-Custom-orange.svg
+[ha]: https://www.home-assistant.io/
+[ha-shield]: https://img.shields.io/badge/Home%20Assistant-2026.10%2B-41BDF5.svg?logo=home-assistant
+[maintenance-shield]: https://img.shields.io/badge/maintainer-markwallsgrove-blue.svg
+[profile]: https://github.com/markwallsgrove
+[quality]: https://developers.home-assistant.io/docs/core/integration-quality-scale/
+[quality-shield]: https://img.shields.io/badge/quality%20scale-platinum-e5e4e2.svg
+[license]: LICENSE
+[license-shield]: https://img.shields.io/github/license/markwallsgrove/ha-maveo.svg
+[buymecoffee]: https://www.buymeacoffee.com/markwallsgrove
+[buymecoffeebadge]: https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?logo=buy-me-a-coffee

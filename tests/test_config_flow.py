@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 
 import aiohttp
-import pytest
 from homeassistant.config_entries import (
     SOURCE_RECONFIGURE,
     ConfigEntry,
@@ -14,35 +13,29 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+import pytest
 
 from custom_components.maveo import config_flow
-from custom_components.maveo.api import AuthResult, Config
-from custom_components.maveo.api import config as maveo_config
+from custom_components.maveo.api import AuthResult, Config, config as maveo_config
 
 from .conftest import add_entry_via_flow
 from .fakes import EMAIL, PASSWORD, CognitoPool, FakeMaveoApi
 
 
-async def test_wrong_password_shows_invalid_auth(
-    hass: HomeAssistant, cloud: FakeMaveoApi
-) -> None:
+async def test_wrong_password_shows_invalid_auth(hass: HomeAssistant, cloud: FakeMaveoApi) -> None:
     result = await add_entry_via_flow(hass, password="wrong-password")
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "invalid_auth"}
 
 
-async def test_same_account_twice_aborts(
-    hass: HomeAssistant, cloud: FakeMaveoApi
-) -> None:
+async def test_same_account_twice_aborts(hass: HomeAssistant, cloud: FakeMaveoApi) -> None:
     assert (await add_entry_via_flow(hass))["type"] is FlowResultType.CREATE_ENTRY
     result = await add_entry_via_flow(hass)
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
 
 
-async def test_two_accounts_load_side_by_side(
-    hass: HomeAssistant, cloud: FakeMaveoApi, cognito: CognitoPool
-) -> None:
+async def test_two_accounts_load_side_by_side(hass: HomeAssistant, cloud: FakeMaveoApi, cognito: CognitoPool) -> None:
     second = "second@example.com"
     cognito.add_user(second)
 
@@ -55,9 +48,7 @@ async def test_two_accounts_load_side_by_side(
     assert len(hass.config_entries.async_entries("maveo")) == 2
 
 
-async def test_reconfigure_updates_password(
-    hass: HomeAssistant, entry: ConfigEntry, cognito: CognitoPool
-) -> None:
+async def test_reconfigure_updates_password(hass: HomeAssistant, entry: ConfigEntry, cognito: CognitoPool) -> None:
     new_password = "Changed-password-2"
     cognito.idp().admin_set_user_password(
         UserPoolId=cognito.user_pool_id,
@@ -94,9 +85,7 @@ async def test_unreachable_cloud_shows_cannot_connect(
 ) -> None:
     eu = maveo_config.Region.EU
     configs = dict(maveo_config._CONFIGS)
-    configs[eu] = dataclasses.replace(
-        configs[eu], cognito_idp_url=f"http://127.0.0.1:{unused_tcp_port}/"
-    )
+    configs[eu] = dataclasses.replace(configs[eu], cognito_idp_url=f"http://127.0.0.1:{unused_tcp_port}/")
     monkeypatch.setattr(maveo_config, "_CONFIGS", configs)
 
     result = await add_entry_via_flow(hass)
@@ -109,9 +98,7 @@ async def test_unexpected_error_shows_unknown(
 ) -> None:
     # Nothing at the network boundary raises a non-Maveo error, so the sign-in
     # call is replaced with one of the same signature that does.
-    async def _broken_login(
-        session: aiohttp.ClientSession, username: str, password: str, config: Config
-    ) -> AuthResult:
+    async def _broken_login(session: aiohttp.ClientSession, username: str, password: str, config: Config) -> AuthResult:
         raise RuntimeError("bug")
 
     monkeypatch.setattr(config_flow, "login", _broken_login)

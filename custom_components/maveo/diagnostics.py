@@ -28,9 +28,7 @@ TO_REDACT = {
 }
 
 
-async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, entry: MaveoConfigEntry
-) -> dict[str, Any]:
+async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: MaveoConfigEntry) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     data = entry.runtime_data
     return {
@@ -39,10 +37,7 @@ async def async_get_config_entry_diagnostics(
             device_id: {
                 "device": asdict(device.info),
                 "state": async_redact_data(device.state.data or {}, TO_REDACT),
-                "guests": [
-                    async_redact_data(asdict(guest), TO_REDACT)
-                    for guest in device.guests.data or []
-                ],
+                "guests": [async_redact_data(asdict(guest), TO_REDACT) for guest in device.guests.data or []],
             }
             for device_id, device in data.devices.items()
         },

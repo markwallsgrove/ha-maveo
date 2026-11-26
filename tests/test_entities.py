@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+import re
+import time
 from typing import Any
 
-import pytest
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
+import pytest
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.maveo.api.iot import DOOR_STOPPED
+from custom_components.maveo.const import DEVICE_POLL_INTERVAL
 
 from .conftest import add_entry_via_flow
 from .fakes import DEVICE_ID, HT_SENSOR_REPLY, FakeMaveoApi, FakeStick
@@ -28,9 +34,7 @@ async def test_entry_loads(entry: ConfigEntry) -> None:
     assert entry.title == "owner@example.com"
 
 
-async def test_cover_reports_closed_door(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
+async def test_cover_reports_closed_door(hass: HomeAssistant, entry: ConfigEntry) -> None:
     state = _state(hass, "cover", f"{DEVICE_ID}_cover")
     assert state.state == "closed"
     assert state.attributes["position_name"] == "Closed"
@@ -38,9 +42,7 @@ async def test_cover_reports_closed_door(
     assert state.attributes["intermediate_close_configured"] is False
 
 
-async def test_stopped_door_is_open(
-    hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick
-) -> None:
+async def test_stopped_door_is_open(hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick) -> None:
     stick.replies["AtoS_s"] = {"StoA_s": DOOR_STOPPED}
     await add_entry_via_flow(hass)
     state = _state(hass, "cover", f"{DEVICE_ID}_cover")
@@ -66,16 +68,12 @@ async def test_light_and_connectivity(hass: HomeAssistant, entry: ConfigEntry) -
         ("weather_humidity", "56.0"),
     ],
 )
-async def test_device_sensors(
-    hass: HomeAssistant, entry_all_enabled: ConfigEntry, key: str, expected: str
-) -> None:
+async def test_device_sensors(hass: HomeAssistant, entry_all_enabled: ConfigEntry, key: str, expected: str) -> None:
     assert _state(hass, "sensor", f"{DEVICE_ID}_{key}").state == expected
 
 
 @pytest.mark.parametrize("key", ["rssi", "stick_type"])
-async def test_noisy_diagnostics_are_disabled_by_default(
-    hass: HomeAssistant, entry: ConfigEntry, key: str
-) -> None:
+async def test_noisy_diagnostics_are_disabled_by_default(hass: HomeAssistant, entry: ConfigEntry, key: str) -> None:
     registry = er.async_get(hass)
     entity_id = registry.async_get_entity_id("sensor", "maveo", f"{DEVICE_ID}_{key}")
     assert entity_id is not None
@@ -84,9 +82,7 @@ async def test_noisy_diagnostics_are_disabled_by_default(
     assert reg_entry.disabled_by is er.RegistryEntryDisabler.INTEGRATION
 
 
-async def test_rssi_attributes(
-    hass: HomeAssistant, entry_all_enabled: ConfigEntry
-) -> None:
+async def test_rssi_attributes(hass: HomeAssistant, entry_all_enabled: ConfigEntry) -> None:
     attrs = _state(hass, "sensor", f"{DEVICE_ID}_rssi").attributes
     assert attrs["ssid"] == "home"
     assert attrs["ip"] == "192.168.0.50"
@@ -99,12 +95,59 @@ async def test_location(hass: HomeAssistant, entry: ConfigEntry) -> None:
     assert state.attributes["longitude"] == -0.12
 
 
-async def test_unknown_door_when_stick_silent(
-    hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick
-) -> None:
+async def test_unknown_door_when_stick_silent(hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick) -> None:
     stick.replies = {}
     await add_entry_via_flow(hass)
     assert _state(hass, "cover", f"{DEVICE_ID}_cover").state == "unavailable"
+
+
+async def test_stick_flooding_status_replies_is_unavailable(
+    hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick
+) -> None:
+    stick.bluefi = True
+    stick.dump = [{"StoA_l_r": 1}] * 20
+    await add_entry_via_flow(hass)
+    assert _state(hass, "cover", f"{DEVICE_ID}_cover").state == "unavailable"
+
+
+async def test_stick_without_location_is_not_asked_for_weather(
+    hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick
+) -> None:
+    stick.replies["AtoS_gps_req"] = {"StoA_gps": 1}
+    await add_entry_via_flow(hass)
+    assert _state(hass, "device_tracker", f"{DEVICE_ID}_location").state == "unavailable"
+    assert not any("AtoS_weather" in command for command in stick.commands)
+
+
+async def test_door_without_learned_positions(hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick) -> None:
+    stick.replies["AtoS_req_ime_learn"] = {"error": 1}
+    await add_entry_via_flow(hass)
+    state = _state(hass, "cover", f"{DEVICE_ID}_cover")
+    assert state.state == "closed"
+    assert "intermediate_open_configured" not in state.attributes
+
+
+@pytest.mark.parametrize(
+    ("command", "key"),
+    [("AtoS_v", "firmware"), ("AtoS_sensor", "ht_sensor"), ("AtoS_weather", "weather_temperature")],
+)
+async def test_unanswered_read_is_unknown(
+    hass: HomeAssistant, entry_all_enabled: ConfigEntry, stick: FakeStick, command: str, key: str
+) -> None:
+    assert _state(hass, "sensor", f"{DEVICE_ID}_{key}").state != "unknown"
+    del stick.replies[command]
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=DEVICE_POLL_INTERVAL + 1))
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert _state(hass, "sensor", f"{DEVICE_ID}_{key}").state == "unknown"
+
+
+async def test_paired_indoor_sensor_without_readings(
+    hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick
+) -> None:
+    stick.ht_sensor = {"StoA_sensor": 0}
+    await add_entry_via_flow(hass)
+    assert _state(hass, "sensor", f"{DEVICE_ID}_ht_sensor").state == "paired"
+    assert _state(hass, "sensor", f"{DEVICE_ID}_indoor_temperature").state == "unknown"
 
 
 @pytest.mark.parametrize(
@@ -119,6 +162,7 @@ async def test_unknown_door_when_stick_silent(
 )
 async def test_actions_send_mqtt_command(
     hass: HomeAssistant,
+    *,
     entry: ConfigEntry,
     stick: FakeStick,
     domain: str,
@@ -128,15 +172,11 @@ async def test_actions_send_mqtt_command(
 ) -> None:
     entity_id = _state(hass, domain, unique_id).entity_id
     stick.commands.clear()
-    await hass.services.async_call(
-        domain, service, {"entity_id": entity_id}, blocking=True
-    )
+    await hass.services.async_call(domain, service, {"entity_id": entity_id}, blocking=True)
     assert stick.commands[0] == command
 
 
-async def test_guest_sensor(
-    hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick
-) -> None:
+async def test_guest_sensor(hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick) -> None:
     cloud.guests.append(
         {
             "userid": "abcdef12-0000-0000-0000-000000000000",
@@ -150,9 +190,7 @@ async def test_guest_sensor(
     )
     await add_entry_via_flow(hass)
 
-    state = _state(
-        hass, "sensor", f"{DEVICE_ID}_guest_abcdef12-0000-0000-0000-000000000000"
-    )
+    state = _state(hass, "sensor", f"{DEVICE_ID}_guest_abcdef12-0000-0000-0000-000000000000")
     assert state.attributes["rights"] == "admin"
     assert state.attributes["claimed"] is True
     assert state.attributes["app_name"] == "Pixel"
@@ -163,16 +201,45 @@ async def test_guest_sensor(
     assert "guesttoken" not in str(state.attributes)
 
 
-async def test_rest_calls_carry_cognito_id_token(
-    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
+@pytest.mark.parametrize(
+    ("ttl", "expected"),
+    [
+        ("token expired", r"expired"),
+        ("1000000000", r"expired"),
+        (str(int(time.time()) + 1800), r"\d+m"),
+    ],
+    ids=["not-a-time", "past", "under-an-hour"],
+)
+async def test_guest_sensor_time_left(
+    hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick, ttl: str, expected: str
 ) -> None:
+    user_id = "abcdef12-0000-0000-0000-000000000000"
+    cloud.guests.append(
+        {
+            "userid": user_id,
+            "token": "guesttoken",
+            "rights": "0",
+            "ttl": ttl,
+            "nametag1": "",
+            "nametag2": "",
+            "nametag3": "",
+        }
+    )
+    await add_entry_via_flow(hass)
+
+    state = _state(hass, "sensor", f"{DEVICE_ID}_guest_{user_id}")
+    assert re.fullmatch(expected, state.state)
+    assert state.attributes["rights"] == "restricted"
+    assert state.attributes["claimed"] is False
+    assert not {"app_name", "os", "locale"} & state.attributes.keys()
+
+
+async def test_rest_calls_carry_cognito_id_token(hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi) -> None:
     assert cloud.commands()[:2] == ["list_device", "list_user"]
     assert all(a.startswith("Bearer ey") for a in cloud.authorizations)
 
 
-async def test_mqtt_connection_is_sigv4_signed(
-    hass: HomeAssistant, entry: ConfigEntry, stick: FakeStick
-) -> None:
+async def test_mqtt_connection_is_sigv4_signed(hass: HomeAssistant, entry: ConfigEntry, stick: FakeStick) -> None:
     headers = stick.connect_headers[0]
     assert headers["Authorization"].startswith("AWS4-HMAC-SHA256 Credential=")
     assert "X-Amz-Security-Token" in headers
@@ -184,13 +251,9 @@ async def test_unload(hass: HomeAssistant, entry: ConfigEntry) -> None:
     assert entry.state is ConfigEntryState.NOT_LOADED
 
 
-async def test_every_entity_has_a_distinct_name(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
+async def test_every_entity_has_a_distinct_name(hass: HomeAssistant, entry: ConfigEntry) -> None:
     entries = [
-        e
-        for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
-        if e.disabled_by is None
+        e for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id) if e.disabled_by is None
     ]
     states = [hass.states.get(e.entity_id) for e in entries]
     names = [state.name for state in states if state is not None]
@@ -199,9 +262,7 @@ async def test_every_entity_has_a_distinct_name(
     assert "Garage" not in names
 
 
-async def test_bluefi_stick_with_indoor_sensor(
-    hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick
-) -> None:
+async def test_bluefi_stick_with_indoor_sensor(hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick) -> None:
     stick.bluefi = True
     stick.ht_sensor = dict(HT_SENSOR_REPLY)
     await add_entry_via_flow(hass)
@@ -217,9 +278,7 @@ async def test_bluefi_stick_with_indoor_sensor(
     assert _state(hass, "cover", f"{DEVICE_ID}_cover").state == "closed"
 
 
-async def test_bluefi_stick_type(
-    hass: HomeAssistant, stick: FakeStick, entry_all_enabled: ConfigEntry
-) -> None:
+async def test_bluefi_stick_type(hass: HomeAssistant, stick: FakeStick, entry_all_enabled: ConfigEntry) -> None:
     stick.bluefi = True
     assert await hass.config_entries.async_reload(entry_all_enabled.entry_id)
     await hass.async_block_till_done()

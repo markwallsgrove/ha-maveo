@@ -19,6 +19,8 @@ async def async_setup_entry(
     entry: MaveoConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
+    """Add a connectivity sensor for each stick."""
+
     @callback
     def _add(device: MaveoDevice) -> None:
         async_add_entities([MaveoConnectivity(device)])
@@ -34,12 +36,15 @@ class MaveoConnectivity(MaveoEntity, BinarySensorEntity):
     _attr_translation_key = "connectivity"
 
     def __init__(self, device: MaveoDevice) -> None:
+        """Attach the sensor to the stick's device."""
         super().__init__(device, "connectivity")
 
     @property
     def available(self) -> bool:
+        """Available while polls succeed, so it can report the stick offline."""
         return self.coordinator.last_update_success
 
     @property
     def is_on(self) -> bool:
+        """Whether the stick answered the last poll."""
         return bool(self.data.get("online"))

@@ -1,24 +1,44 @@
 [project]
 name = "ha-maveo"
 version = "1.1.1"
-requires-python = ">=3.13"
-
-[tool.ruff]
-target-version = "py313"
-
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "BLE"]
-
-[tool.mypy]
-strict = true
-python_version = "3.13"
-packages = ["custom_components.maveo", "tests"]
-
-[[tool.mypy.overrides]]
-module = ["Crypto.*", "pytest_homeassistant_custom_component.*"]
-follow_untyped_imports = true
+requires-python = ">=3.14"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+addopts = "--cov=custom_components.maveo --cov-branch --cov-report=term-missing --cov-fail-under=100"
+
+[tool.coverage.run]
+source = ["custom_components/maveo"]
+
+[tool.mypy]
+strict = true
+python_version = "3.14"
+mypy_path = "."
+explicit_package_bases = true
+
+# These packages ship typed code without a py.typed marker; check them as they are.
+[[tool.mypy.overrides]]
+module = ["Crypto.*", "pytest_homeassistant_custom_component.*"]
+follow_untyped_imports = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "BLE", "SIM", "D", "RUF", "PL", "PT", "ASYNC", "C4", "PIE", "RET"]
+ignore = ["D203", "D213", "D401", "PLR0913", "PLR2004"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["custom_components.maveo"]
+force-sort-within-sections = true
+combine-as-imports = true
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"

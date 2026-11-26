@@ -7,8 +7,7 @@ import logging
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.helpers.typing import ConfigType
 
 from .api import AuthError, CloudError, Device, Region, get_config
@@ -50,10 +49,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MaveoConfigEntry) -> boo
 
     data = MaveoData(session=session, account=account)
     devices = await asyncio.gather(
-        *(
-            _async_create_device(hass, entry, session, device, first_setup=True)
-            for device in account.data.values()
-        )
+        *(_async_create_device(hass, entry, session, device, first_setup=True) for device in account.data.values())
     )
     data.devices = {device.info.id: device for device in devices}
     entry.runtime_data = data
@@ -65,9 +61,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MaveoConfigEntry) -> boo
 
     @callback
     def _account_updated() -> None:
-        entry.async_create_background_task(
-            hass, _async_sync_devices(hass, entry), "maveo device sync"
-        )
+        entry.async_create_background_task(hass, _async_sync_devices(hass, entry), "maveo device sync")
 
     entry.async_on_unload(account.async_add_listener(_account_updated))
     entry.async_on_unload(data.async_remove_all)
@@ -84,8 +78,7 @@ async def async_remove_config_entry_device(
 ) -> bool:
     """Allow removing a device that is no longer on the Maveo account."""
     return not any(
-        domain == DOMAIN and device_id in entry.runtime_data.devices
-        for domain, device_id in device_entry.identifiers
+        domain == DOMAIN and device_id in entry.runtime_data.devices for domain, device_id in device_entry.identifiers
     )
 
 
@@ -133,10 +126,6 @@ async def _async_sync_devices(hass: HomeAssistant, entry: MaveoConfigEntry) -> N
         registry = dr.async_get(hass)
         for device_id in remove:
             data.async_device_removed(device_id)
-            device_entry = registry.async_get_device_by_identifier(
-                (DOMAIN, device_id), entry.entry_id
-            )
+            device_entry = registry.async_get_device_by_identifier((DOMAIN, device_id), entry.entry_id)
             if device_entry is not None:
-                registry.async_update_device(
-                    device_entry.id, remove_config_entry_id=entry.entry_id
-                )
+                registry.async_update_device(device_entry.id, remove_config_entry_id=entry.entry_id)

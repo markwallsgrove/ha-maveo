@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import AsyncIterator
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import aiohttp
-import pytest
 from aiohttp import web
+import pytest
 
 from custom_components.maveo.api import (
     APIError,
@@ -98,9 +98,7 @@ _TOKENS = {"AuthenticationResult": {"IdToken": "id", "RefreshToken": "r"}}
 
 
 async def test_unsupported_challenge_is_auth_error(env: Env) -> None:
-    env.server.responses["InitiateAuth"] = [
-        _json({"ChallengeName": "SMS_MFA", "Session": "s"})
-    ]
+    env.server.responses["InitiateAuth"] = [_json({"ChallengeName": "SMS_MFA", "Session": "s"})]
     with pytest.raises(AuthError, match="SMS_MFA"):
         await login(env.http, "a@b.c", "pw", env.config)
 
@@ -113,12 +111,8 @@ async def test_unsupported_challenge_is_auth_error(env: Env) -> None:
         ("TooManyRequestsException", CloudError),
     ],
 )
-async def test_cognito_error_codes(
-    env: Env, type_: str, error: type[Exception]
-) -> None:
-    env.server.responses["InitiateAuth"] = [
-        _json({"__type": type_, "message": "nope"}, status=400)
-    ]
+async def test_cognito_error_codes(env: Env, type_: str, error: type[Exception]) -> None:
+    env.server.responses["InitiateAuth"] = [_json({"__type": type_, "message": "nope"}, status=400)]
     with pytest.raises(error):
         await refresh(env.http, "token", env.config)
 
@@ -132,9 +126,7 @@ async def test_cognito_error_codes(
     ],
     ids=["not-json", "not-object", "missing-id-token"],
 )
-async def test_malformed_cognito_response_is_cloud_error(
-    env: Env, response: web.Response
-) -> None:
+async def test_malformed_cognito_response_is_cloud_error(env: Env, response: web.Response) -> None:
     env.server.responses["InitiateAuth"] = [response]
     with pytest.raises(CloudError):
         await login(env.http, "a@b.c", "pw", env.config)
@@ -148,9 +140,7 @@ async def test_malformed_cognito_response_is_cloud_error(
     ],
     ids=["no-credentials", "no-expiration"],
 )
-async def test_incomplete_credentials_are_cloud_error(
-    env: Env, credentials: dict[str, object]
-) -> None:
+async def test_incomplete_credentials_are_cloud_error(env: Env, credentials: dict[str, object]) -> None:
     env.server.responses["InitiateAuth"] = [_json(_TOKENS)]
     env.server.responses["GetId"] = [_json({"IdentityId": "eu-central-1:x"})]
     env.server.responses["GetCredentialsForIdentity"] = [_json(credentials)]
@@ -159,9 +149,7 @@ async def test_incomplete_credentials_are_cloud_error(
 
 
 async def test_refresh_keeps_token_when_not_rotated(env: Env) -> None:
-    env.server.responses["InitiateAuth"] = [
-        _json({"AuthenticationResult": {"IdToken": "id"}})
-    ]
+    env.server.responses["InitiateAuth"] = [_json({"AuthenticationResult": {"IdToken": "id"}})]
     env.server.responses["GetId"] = [_json({"IdentityId": "eu-central-1:x"})]
     env.server.responses["GetCredentialsForIdentity"] = [
         _json(
@@ -180,12 +168,8 @@ async def test_refresh_keeps_token_when_not_rotated(env: Env) -> None:
     assert result.expiration == datetime(2100, 1, 1, tzinfo=UTC)
 
 
-async def test_unreachable_cognito_is_cloud_error(
-    env: Env, unused_tcp_port: int
-) -> None:
-    config = dataclasses.replace(
-        env.config, cognito_idp_url=f"http://127.0.0.1:{unused_tcp_port}/"
-    )
+async def test_unreachable_cognito_is_cloud_error(env: Env, unused_tcp_port: int) -> None:
+    config = dataclasses.replace(env.config, cognito_idp_url=f"http://127.0.0.1:{unused_tcp_port}/")
     with pytest.raises(CloudError, match="ClientConnectorError"):
         await login(env.http, "a@b.c", "pw", config)
 
@@ -197,9 +181,7 @@ async def test_rest_non_json_is_api_error(env: Env) -> None:
 
 
 async def test_rest_unreachable_is_api_error(env: Env, unused_tcp_port: int) -> None:
-    config = dataclasses.replace(
-        env.config, api_admin_url=f"http://127.0.0.1:{unused_tcp_port}/admin"
-    )
+    config = dataclasses.replace(env.config, api_admin_url=f"http://127.0.0.1:{unused_tcp_port}/admin")
     with pytest.raises(APIError, match="request failed"):
         await MaveoClient(env.http, _AUTH, config).list_devices()
 
