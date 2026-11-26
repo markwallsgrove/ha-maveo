@@ -19,6 +19,8 @@ async def async_setup_entry(
     entry: MaveoConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
+    """Add a location tracker for each stick."""
+
     @callback
     def _add(device: MaveoDevice) -> None:
         async_add_entities([MaveoGarageLocation(device)])
@@ -33,16 +35,18 @@ class MaveoGarageLocation(MaveoEntity, TrackerEntity):
     _attr_source_type = SourceType.GPS
 
     def __init__(self, device: MaveoDevice) -> None:
+        """Attach the tracker to the stick's device."""
         super().__init__(device, "location")
         self._device_info = maveo_device_info(device)
 
     @property
     def device_info(self) -> DeviceInfo:
-        # TrackerEntity types _attr_device_info as None, so expose it here.
+        """The stick's device; TrackerEntity types `_attr_device_info` as None."""
         return self._device_info
 
     @property
     def available(self) -> bool:
+        """Available while polls succeed and the stick has a location."""
         return (
             self.coordinator.last_update_success
             and self.data.get("gps_lat") is not None
@@ -51,14 +55,17 @@ class MaveoGarageLocation(MaveoEntity, TrackerEntity):
 
     @property
     def latitude(self) -> float | None:
+        """The stick's latitude."""
         value = self.data.get("gps_lat")
         return float(value) if value is not None else None
 
     @property
     def longitude(self) -> float | None:
+        """The stick's longitude."""
         value = self.data.get("gps_lng")
         return float(value) if value is not None else None
 
     @property
     def location_accuracy(self) -> int:
+        """The stick does not report an accuracy."""
         return 0

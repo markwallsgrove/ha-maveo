@@ -5,12 +5,16 @@ from enum import StrEnum
 
 
 class Region(StrEnum):
+    """Where the Maveo account was created."""
+
     EU = "EU"
     US = "US"
 
 
 @dataclass(frozen=True)
 class Config:
+    """Cloud endpoints and IDs for one region."""
+
     client_id: str
     aws_region: str
     identity_pool_id: str
@@ -60,4 +64,5 @@ _CONFIGS = {
 
 
 def get_config(region: Region = Region.EU) -> Config:
+    """The cloud endpoints for `region`."""
     return _CONFIGS[region]

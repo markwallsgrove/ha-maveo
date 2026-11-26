@@ -98,9 +98,7 @@ aud: 34eruqhvvnniig5bccrre6s0ck
 ### Step 3 — Cognito Identity Pool → AWS credentials
 
 ```python
-logins = {
-    "cognito-idp.eu-central-1.amazonaws.com/eu-central-1_ozbW8rTAj": guest_id_token
-}
+logins = {"cognito-idp.eu-central-1.amazonaws.com/eu-central-1_ozbW8rTAj": guest_id_token}
 identity_id = cognito_identity.get_id(IdentityPoolId=..., Logins=logins)["IdentityId"]
 creds = cognito_identity.get_credentials_for_identity(IdentityId=identity_id, Logins=logins)
 ```
@@ -192,9 +190,7 @@ The geofence (`rights=0`) is enforced only by the app, not the server.
 
 ```python
 # Generate a link (requires a valid GuestUser object):
-link = client.generate_guest_link(guest, device_id, "My Garage",
-                                   location_name="Home",
-                                   latitude=48.858, longitude=2.294)
+link = client.generate_guest_link(guest, device_id, "My Garage", location_name="Home", latitude=48.858, longitude=2.294)
 ```
 
 ---

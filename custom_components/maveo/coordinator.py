@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from enum import Enum, auto
+import logging
 from typing import Any
 
 import aiohttp
@@ -43,24 +43,15 @@ _LOGGER = logging.getLogger(__name__)
 
 _POLL = timedelta(seconds=DEVICE_POLL_INTERVAL)
 _FAST_POLL = timedelta(seconds=FAST_POLL_INTERVAL)
+_REPLY_TIMEOUT = 3.0
+# The most packets a BlueFi sends in reply to STATUS before StoA_s
+_STATUS_PACKETS = 15
 
 _DOOR_COMMANDS = {
     Direction.OPEN: Command.GARAGE_OPEN,
     Direction.CLOSE: Command.GARAGE_CLOSE,
     None: Command.GARAGE_STOP,
 }
-
-_READ_COMMANDS = [
-    ("firmware", Command.VERSION, "StoA_v"),
-    ("light_on", Command.LIGHT_READ, "StoA_l_r"),
-    ("serial", Command.SERIAL, "StoA_serial"),
-    ("device_name", Command.NAME_READ, "StoA_name_r"),
-    ("ttc_minutes", Command.TTC_READ, "StoA_ttc_r"),
-    ("buzzer_on", Command.BUZZER_READ, "StoA_buzzer_r"),
-    ("gps", Command.GPS_READ, None),
-    ("wifi", Command.WIFI_READ, None),
-    ("ime", Command.IME_LEARN_READ, None),
-]
 
 _EMPTY: dict[str, Any] = {
     "online": False,
@@ -106,6 +97,142 @@ def _hundredths(value: object) -> float | None:
     return None
 
 
+type _Parser = Callable[[Mapping[str, Any]], dict[str, Any]]
+
+
+def _value(key: str, response_key: str) -> _Parser:
+    """Parse a reply that carries one value under `response_key`."""
+
+    def parse(reply: Mapping[str, Any]) -> dict[str, Any]:
+        return {key: reply[response_key]} if response_key in reply else {}
+
+    return parse
+
+
+def _flag(key: str, response_key: str) -> _Parser:
+    """Parse a reply that carries one on/off value under `response_key`."""
+
+    def parse(reply: Mapping[str, Any]) -> dict[str, Any]:
+        value = reply.get(response_key)
+        return {} if value is None else {key: bool(value)}
+
+    return parse
+
+
+def _gps(reply: Mapping[str, Any]) -> dict[str, Any]:
+    """Parse the stick's location; StoA_gps is 0 when it has one."""
+    if reply.get("StoA_gps") != 0:
+        return {}
+    lat = reply.get("lat")
+    return {"gps_lat": lat, "gps_lng": reply.get("lng"), "has_gps": lat is not None}
+
+
+def _wifi(reply: Mapping[str, Any]) -> dict[str, Any]:
+    """Parse the stick's WiFi connection."""
+    return {
+        "wifi_ssid": reply.get("ssid"),
+        "wifi_ip": reply.get("ip"),
+        "wifi_mac": reply.get("mac"),
+        "wifi_rssi": reply.get("rssi"),
+    }
+
+
+def _ime(reply: Mapping[str, Any]) -> dict[str, Any]:
+    """Parse whether the open and close travel have been learned."""
+    if "StoA_ime_learn" not in reply:
+        return {}
+    return {"ime_open": bool(reply.get("open")), "ime_close": bool(reply.get("close"))}
+
+
+def _indoor_reading(reply: Mapping[str, Any]) -> dict[str, Any]:
+    """Parse the indoor sensor's readings and details."""
+    return {
+        "ht_temperature": _hundredths(reply.get("temperature_val")),
+        "ht_humidity": _hundredths(reply.get("humidity_val")),
+        "ht_battery": reply.get("battery_val"),
+        "ht_last_update": reply.get("last_update"),
+        "ht_name": reply.get("name") or None,
+        "ht_manufacturer": reply.get("manufacturer") or None,
+        "ht_model": reply.get("model") or None,
+        "ht_serial": reply.get("serial_num") or None,
+        "ht_firmware_rev": reply.get("firmware_rev") or None,
+        "ht_software_rev": reply.get("software_rev") or None,
+        "ht_hardware_rev": reply.get("hardware_rev") or None,
+    }
+
+
+def _weather(reply: Mapping[str, Any]) -> dict[str, Any]:
+    """Parse the outdoor weather at the stick's location."""
+    if reply.get("StoA_weather") != 0:
+        return {}
+    return {
+        "weather_temperature": _hundredths(reply.get("temperature")),
+        "weather_humidity": _hundredths(reply.get("humidity")),
+    }
+
+
+_READ_COMMANDS: list[tuple[Mapping[str, int], _Parser]] = [
+    (Command.VERSION, _value("firmware", "StoA_v")),
+    (Command.LIGHT_READ, _flag("light_on", "StoA_l_r")),
+    (Command.SERIAL, _value("serial", "StoA_serial")),
+    (Command.NAME_READ, _value("device_name", "StoA_name_r")),
+    (Command.TTC_READ, _value("ttc_minutes", "StoA_ttc_r")),
+    (Command.BUZZER_READ, _flag("buzzer_on", "StoA_buzzer_r")),
+    (Command.GPS_READ, _gps),
+    (Command.WIFI_READ, _wifi),
+    (Command.IME_LEARN_READ, _ime),
+]
+
+
+async def _ask(iot: MaveoIoTClient, command: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Send a command and return the JSON reply; None when none arrives."""
+    await iot.send(command)
+    return _json(await iot.receive())
+
+
+def _json(packet: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """The JSON body of a packet; None for a missing or non-JSON packet."""
+    if packet is None:
+        return None
+    body: Mapping[str, Any] | None = packet.get("json")
+    return body
+
+
+async def _read_status(iot: MaveoIoTClient) -> dict[str, Any]:
+    """Read the door position and whether the stick is a BlueFi.
+
+    A BlueFi stick sends a full state dump before StoA_s, which arrives last;
+    a Connect stick sends only StoA_s.
+    """
+    await iot.send(Command.STATUS)
+    is_bluefi = False
+    for _ in range(_STATUS_PACKETS):
+        reply = _json(await iot.receive())
+        if reply is None:
+            break
+        if "StoA_s" in reply:
+            return {"door_position": reply["StoA_s"], "is_bluefi": is_bluefi}
+        is_bluefi = True
+    return {"door_position": None, "is_bluefi": is_bluefi}
+
+
+async def _read_indoor_sensor(iot: MaveoIoTClient) -> dict[str, Any]:
+    """Read whether the indoor sensor is paired, and its readings when it is."""
+    reply = await _ask(iot, Command.SENSOR_PRESENCE)
+    if reply is None:
+        return {}
+    paired = reply.get("StoA_sensor") == 0 and reply.get("command") == 0 and reply.get("error") == 0
+    if not paired:
+        return {"ht_sensor_paired": False}
+    # SENSOR_FULL sends the readings, then {"state": 9}
+    await iot.send(Command.SENSOR_FULL)
+    for _ in range(2):
+        reading = _json(await iot.receive())
+        if reading is not None and "temperature_val" in reading:
+            return {"ht_sensor_paired": True, **_indoor_reading(reading)}
+    return {"ht_sensor_paired": True}
+
+
 class Reachability(Enum):
     """Whether a device answered its last poll; changes are logged once."""
 
@@ -119,9 +246,8 @@ class MaveoAccountCoordinator(DataUpdateCoordinator[dict[str, Device]]):
 
     config_entry: ConfigEntry
 
-    def __init__(
-        self, hass: HomeAssistant, entry: ConfigEntry, session: MaveoSession
-    ) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, session: MaveoSession) -> None:
+        """Poll the account's sticks for `entry`."""
         super().__init__(
             hass,
             _LOGGER,
@@ -152,6 +278,7 @@ class MaveoGuestCoordinator(DataUpdateCoordinator[list[GuestUser]]):
         session: MaveoSession,
         device_id: str,
     ) -> None:
+        """Poll the guest keys of one stick."""
         super().__init__(
             hass,
             _LOGGER,
@@ -192,6 +319,7 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         session: MaveoSession,
         device_id: str,
     ) -> None:
+        """Poll the state of one stick."""
         super().__init__(
             hass,
             _LOGGER,
@@ -222,9 +350,7 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._set_poll_interval(now, moving=False)
             if (last := self._last_state(fast=fast)) is not None:
                 return last
-            raise translated(
-                UpdateFailed, "device_unreachable", err, device_id=self.device_id
-            ) from err
+            raise translated(UpdateFailed, "device_unreachable", err, device_id=self.device_id) from err
 
         position = result.get("door_position")
         if position is None and (last := self._last_state(fast=fast)) is not None:
@@ -267,137 +393,35 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _update_device_registry(self, data: Mapping[str, Any]) -> None:
         """Keep firmware and serial in the device registry current."""
         registry = dr.async_get(self.hass)
-        device = registry.async_get_device_by_identifier(
-            (DOMAIN, self.device_id), self.config_entry.entry_id
-        )
+        device = registry.async_get_device_by_identifier((DOMAIN, self.device_id), self.config_entry.entry_id)
         if device is None:
             return
         sw_version = data.get("firmware") or device.sw_version
         serial_number = data.get("serial") or device.serial_number
         if (sw_version, serial_number) != (device.sw_version, device.serial_number):
-            registry.async_update_device(
-                device.id, sw_version=sw_version, serial_number=serial_number
-            )
+            registry.async_update_device(device.id, sw_version=sw_version, serial_number=serial_number)
 
     async def _fetch_mqtt_state(self, *, position_only: bool) -> dict[str, Any]:
-        updates: dict[str, Any] = {"door_position": None}
         async with MaveoIoTClient(
-            self._session.http, self._session.auth, self._session.config, self.device_id
+            self._session.http,
+            self._session.auth,
+            self._session.config,
+            self.device_id,
+            reply_timeout=_REPLY_TIMEOUT,
         ) as iot:
             await iot.subscribe()
-            await iot.send(Command.STATUS)
-            # BlueFi sends a full state dump before StoA_s (which arrives last).
-            # Connect stick sends only StoA_s.
-            # Any packet before StoA_s means a BlueFi stick.
-            is_bluefi = False
-            for _ in range(15):
-                pkt = await iot.receive(timeout=3.0)
-                if not pkt or "json" not in pkt:
-                    break
-                d = pkt["json"]
-                if "StoA_s" in d:
-                    updates["door_position"] = d["StoA_s"]
-                    break
-                is_bluefi = True
-            updates["is_bluefi"] = is_bluefi
+            updates = await _read_status(iot)
             if position_only or updates["door_position"] is None:
                 return updates
-
-            for key, cmd, response_key in _READ_COMMANDS:
-                await iot.send(cmd)
-                pkt = await iot.receive(timeout=3.0)
-                if not pkt or "json" not in pkt:
-                    continue
-                d = pkt["json"]
-
-                if key == "gps":
-                    if d.get("StoA_gps") == 0:
-                        updates["gps_lat"] = d.get("lat")
-                        updates["gps_lng"] = d.get("lng")
-                        if updates["gps_lat"] is not None:
-                            updates["has_gps"] = True
-                elif key == "wifi":
-                    updates["wifi_ssid"] = d.get("ssid")
-                    updates["wifi_ip"] = d.get("ip")
-                    updates["wifi_mac"] = d.get("mac")
-                    updates["wifi_rssi"] = d.get("rssi")
-                elif key == "ime":
-                    if "StoA_ime_learn" in d:
-                        updates["ime_open"] = bool(d.get("open"))
-                        updates["ime_close"] = bool(d.get("close"))
-                elif key == "light_on":
-                    val = d.get(response_key)
-                    if val is not None:
-                        updates["light_on"] = bool(val)
-                elif key == "buzzer_on":
-                    val = d.get(response_key)
-                    if val is not None:
-                        updates["buzzer_on"] = bool(val)
-                elif response_key and response_key in d:
-                    updates[key] = d[response_key]
-
-            # H+T sensor — detect presence first, then fetch readings if paired
-            await iot.send(Command.SENSOR_PRESENCE)
-            pkt = await iot.receive(timeout=3.0)
-            if pkt and "json" in pkt:
-                d = pkt["json"]
-                paired = (
-                    d.get("StoA_sensor") == 0
-                    and d.get("command") == 0
-                    and d.get("error") == 0
-                )
-                updates["ht_sensor_paired"] = paired
-                if paired:
-                    # SENSOR_FULL returns readings + metadata in one shot
-                    await iot.send(Command.SENSOR_FULL)
-                    # Two responses arrive: data packet then {"state":9} — stop at data
-                    for _ in range(2):
-                        pkt = await iot.receive(timeout=3.0)
-                        if pkt and "json" in pkt:
-                            d = pkt["json"]
-                            if "temperature_val" in d:
-                                updates["ht_temperature"] = _hundredths(
-                                    d.get("temperature_val")
-                                )
-                                updates["ht_humidity"] = _hundredths(
-                                    d.get("humidity_val")
-                                )
-                                updates["ht_battery"] = d.get("battery_val")
-                                updates["ht_last_update"] = d.get("last_update")
-                                updates["ht_name"] = d.get("name") or None
-                                updates["ht_manufacturer"] = (
-                                    d.get("manufacturer") or None
-                                )
-                                updates["ht_model"] = d.get("model") or None
-                                updates["ht_serial"] = d.get("serial_num") or None
-                                updates["ht_firmware_rev"] = (
-                                    d.get("firmware_rev") or None
-                                )
-                                updates["ht_software_rev"] = (
-                                    d.get("software_rev") or None
-                                )
-                                updates["ht_hardware_rev"] = (
-                                    d.get("hardware_rev") or None
-                                )
-                                break
-
-            # Outdoor weather — only meaningful with GPS coordinates
+            for command, parse in _READ_COMMANDS:
+                if (reply := await _ask(iot, command)) is not None:
+                    updates |= parse(reply)
+            updates |= await _read_indoor_sensor(iot)
+            # Outdoor weather is only known for a stick with a location
             if updates.get("has_gps"):
-                weather_cmd = {
-                    "AtoS_weather": 0,
-                    "lat": updates["gps_lat"],
-                    "lng": updates["gps_lng"],
-                }
-                await iot.send(weather_cmd)
-                pkt = await iot.receive(timeout=3.0)
-                if pkt and "json" in pkt:
-                    d = pkt["json"]
-                    if d.get("StoA_weather") == 0:
-                        updates["weather_temperature"] = _hundredths(
-                            d.get("temperature")
-                        )
-                        updates["weather_humidity"] = _hundredths(d.get("humidity"))
-
+                weather = {"AtoS_weather": 0, "lat": updates["gps_lat"], "lng": updates["gps_lng"]}
+                if (reply := await _ask(iot, weather)) is not None:
+                    updates |= _weather(reply)
         return updates
 
     async def async_move_door(self, direction: Direction | None) -> None:
@@ -424,11 +448,10 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._session.auth,
                 self._session.config,
                 self.device_id,
+                reply_timeout=1.0,
             ) as iot:
                 await iot.subscribe()
                 await iot.send(command)
-                await iot.receive(timeout=1.0)  # drain any immediate response
+                await iot.receive()  # drain any immediate response
         except (CloudError, aiohttp.ClientError, TimeoutError, ConnectionError) as err:
-            raise translated(
-                HomeAssistantError, "command_failed", err, device_id=self.device_id
-            ) from err
+            raise translated(HomeAssistantError, "command_failed", err, device_id=self.device_id) from err

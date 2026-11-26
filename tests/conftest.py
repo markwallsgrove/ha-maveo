@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import AsyncIterator, Iterator
+import dataclasses
 from typing import Any
 
-import pytest
 from aiohttp import web
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from moto.core.base_backend import BackendDict
 from moto.server import ThreadedMotoServer
+import pytest
 
 from custom_components.maveo.api import config as maveo_config
 from custom_components.maveo.const import DOMAIN
@@ -41,9 +40,7 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
 
 
 @pytest.fixture
-def cognito(
-    monkeypatch: pytest.MonkeyPatch, socket_enabled: None
-) -> Iterator[CognitoPool]:
+def cognito(monkeypatch: pytest.MonkeyPatch, socket_enabled: None) -> Iterator[CognitoPool]:
     """A fresh moto Cognito server; HA's harness blocks sockets unless enabled."""
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
@@ -70,9 +67,7 @@ def stick() -> FakeStick:
 
 
 @pytest.fixture
-async def maveo_server(
-    socket_enabled: None, maveo_api: FakeMaveoApi, stick: FakeStick
-) -> AsyncIterator[str]:
+async def maveo_server(socket_enabled: None, maveo_api: FakeMaveoApi, stick: FakeStick) -> AsyncIterator[str]:
     """Base URL of the local REST + MQTT-over-WebSocket server."""
     runner = web.AppRunner(create_app(maveo_api, stick))
     await runner.setup()
@@ -112,13 +107,9 @@ def cloud(
     return maveo_api
 
 
-async def add_entry_via_flow(
-    hass: HomeAssistant, password: str = PASSWORD, email: str = EMAIL
-) -> dict[str, Any]:
+async def add_entry_via_flow(hass: HomeAssistant, password: str = PASSWORD, email: str = EMAIL) -> dict[str, Any]:
     """Run the user config flow the way the UI does."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": "user"}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     assert result["type"] is FlowResultType.FORM
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -153,8 +144,6 @@ async def entry_all_enabled(hass: HomeAssistant, entry: ConfigEntry) -> ConfigEn
 @pytest.fixture
 def garage_device_id(hass: HomeAssistant, entry: ConfigEntry) -> str:
     """Home Assistant device registry ID of the fake garage stick."""
-    device = dr.async_get(hass).async_get_device_by_identifier(
-        (DOMAIN, DEVICE_ID), entry.entry_id
-    )
+    device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, DEVICE_ID), entry.entry_id)
     assert device is not None
     return device.id

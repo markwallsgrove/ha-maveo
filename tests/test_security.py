@@ -6,7 +6,6 @@ import base64
 from datetime import timedelta
 from urllib.parse import parse_qs
 
-import pytest
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 from homeassistant.auth.models import User
@@ -16,8 +15,8 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError, Unauthorized
 from homeassistant.util import dt as dt_util
-from hypothesis import given
-from hypothesis import strategies as st
+from hypothesis import given, strategies as st
+import pytest
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.maveo.api import GuestUser
@@ -32,20 +31,14 @@ def _state(entry: ConfigEntry) -> ConfigEntryState:
     return entry.state
 
 
-async def _reload_with_revoked_refresh_token(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
+async def _reload_with_revoked_refresh_token(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_unload(entry.entry_id)
-    hass.config_entries.async_update_entry(
-        entry, data={**entry.data, "refresh_token": "revoked"}
-    )
+    hass.config_entries.async_update_entry(entry, data={**entry.data, "refresh_token": "revoked"})
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
 
-async def test_rejected_refresh_token_signs_in_with_stored_password(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
+async def test_rejected_refresh_token_signs_in_with_stored_password(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await _reload_with_revoked_refresh_token(hass, entry)
 
     assert _state(entry) is ConfigEntryState.LOADED
@@ -95,9 +88,7 @@ async def test_password_changed_while_running_starts_reauth(
     assert [f["context"]["source"] for f in flows] == [SOURCE_REAUTH]
 
 
-async def test_changed_password_starts_reauth(
-    hass: HomeAssistant, entry: ConfigEntry, cognito: CognitoPool
-) -> None:
+async def test_changed_password_starts_reauth(hass: HomeAssistant, entry: ConfigEntry, cognito: CognitoPool) -> None:
     new_password = "Changed-password-2"
     cognito.idp().admin_set_user_password(
         UserPoolId=cognito.user_pool_id,
@@ -111,14 +102,10 @@ async def test_changed_password_starts_reauth(
     flows = hass.config_entries.flow.async_progress_by_handler("maveo")
     assert [f["context"]["source"] for f in flows] == [SOURCE_REAUTH]
 
-    result = await hass.config_entries.flow.async_configure(
-        flows[0]["flow_id"], {CONF_PASSWORD: PASSWORD}
-    )
+    result = await hass.config_entries.flow.async_configure(flows[0]["flow_id"], {CONF_PASSWORD: PASSWORD})
     assert result["errors"] == {"base": "invalid_auth"}
 
-    result = await hass.config_entries.flow.async_configure(
-        flows[0]["flow_id"], {CONF_PASSWORD: new_password}
-    )
+    result = await hass.config_entries.flow.async_configure(flows[0]["flow_id"], {CONF_PASSWORD: new_password})
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
@@ -149,6 +136,7 @@ async def test_new_refresh_token_is_accepted_by_cognito(
 )
 async def test_guest_services_are_admin_only(
     hass: HomeAssistant,
+    *,
     entry: ConfigEntry,
     cloud: FakeMaveoApi,
     hass_read_only_user: User,

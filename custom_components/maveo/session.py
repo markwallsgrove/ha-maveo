@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import UTC, datetime, timedelta
+import logging
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -40,6 +40,7 @@ class MaveoSession:
         http: aiohttp.ClientSession,
         auth: AuthResult,
     ) -> None:
+        """Hold the credentials and REST client for `entry`."""
         self._hass = hass
         self._entry = entry
         self._lock = asyncio.Lock()
@@ -50,14 +51,10 @@ class MaveoSession:
         self._store_refresh_token()
 
     @classmethod
-    async def async_sign_in(
-        cls, hass: HomeAssistant, entry: ConfigEntry, config: Config
-    ) -> MaveoSession:
+    async def async_sign_in(cls, hass: HomeAssistant, entry: ConfigEntry, config: Config) -> MaveoSession:
         """Sign in with the stored credentials. Raises AuthError or CloudError."""
         http = async_get_clientsession(hass)
-        auth = await _async_sign_in(
-            http, config, entry.data.get(CONF_REFRESH_TOKEN), entry
-        )
+        auth = await _async_sign_in(http, config, entry.data.get(CONF_REFRESH_TOKEN), entry)
         return cls(hass, entry, config, http, auth)
 
     async def async_ensure_valid(self) -> None:
@@ -65,9 +62,7 @@ class MaveoSession:
         async with self._lock:
             if self.auth.expiration - _RENEW_MARGIN > datetime.now(UTC):
                 return
-            self.auth = await _async_sign_in(
-                self.http, self.config, self.auth.refresh_token, self._entry
-            )
+            self.auth = await _async_sign_in(self.http, self.config, self.auth.refresh_token, self._entry)
             self.client = MaveoClient(self.http, self.auth, self.config)
             self._store_refresh_token()
 

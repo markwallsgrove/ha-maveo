@@ -6,10 +6,10 @@ calls used here need AWS request signing.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+import json
 from typing import Any
 
 import aiohttp
@@ -45,9 +45,7 @@ class AuthResult:
     expiration: datetime
 
 
-async def login(
-    session: aiohttp.ClientSession, username: str, password: str, config: Config
-) -> AuthResult:
+async def login(session: aiohttp.ClientSession, username: str, password: str, config: Config) -> AuthResult:
     """Sign in with email and password (Cognito USER_PASSWORD_AUTH)."""
     tokens = await _initiate_auth(
         session,
@@ -58,13 +56,9 @@ async def login(
     return await _federate(session, tokens, _str(tokens, "RefreshToken"), config)
 
 
-async def refresh(
-    session: aiohttp.ClientSession, refresh_token: str, config: Config
-) -> AuthResult:
+async def refresh(session: aiohttp.ClientSession, refresh_token: str, config: Config) -> AuthResult:
     """Get fresh credentials from a refresh token (Cognito REFRESH_TOKEN_AUTH)."""
-    tokens = await _initiate_auth(
-        session, config, "REFRESH_TOKEN_AUTH", {"REFRESH_TOKEN": refresh_token}
-    )
+    tokens = await _initiate_auth(session, config, "REFRESH_TOKEN_AUTH", {"REFRESH_TOKEN": refresh_token})
     # Cognito only returns a new refresh token when token rotation is enabled.
     rotated = tokens.get("RefreshToken")
     new_token = rotated if isinstance(rotated, str) and rotated else refresh_token
@@ -85,9 +79,7 @@ async def _initiate_auth(
     )
     result = response.get("AuthenticationResult")
     if not isinstance(result, dict):
-        raise AuthError(
-            f"Unsupported sign-in challenge: {response.get('ChallengeName')}"
-        )
+        raise AuthError(f"Unsupported sign-in challenge: {response.get('ChallengeName')}")
     return result
 
 
@@ -133,9 +125,7 @@ async def _federate(
     )
 
 
-async def _call(
-    session: aiohttp.ClientSession, url: str, target: str, body: Mapping[str, Any]
-) -> dict[str, Any]:
+async def _call(session: aiohttp.ClientSession, url: str, target: str, body: Mapping[str, Any]) -> dict[str, Any]:
     """POST an AWS JSON 1.1 request and return the decoded response."""
     action = target.rsplit(".", 1)[-1]
     try:

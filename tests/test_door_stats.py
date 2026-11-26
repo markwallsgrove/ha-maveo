@@ -22,18 +22,14 @@ from .fakes import DEVICE_ID, FakeStick
 
 
 def _state(hass: HomeAssistant, platform: str, key: str) -> State:
-    entity_id = er.async_get(hass).async_get_entity_id(
-        platform, DOMAIN, f"{DEVICE_ID}_{key}"
-    )
+    entity_id = er.async_get(hass).async_get_entity_id(platform, DOMAIN, f"{DEVICE_ID}_{key}")
     assert entity_id is not None, f"no {platform} entity {key}"
     state = hass.states.get(entity_id)
     assert state is not None
     return state
 
 
-async def _tick(
-    hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float
-) -> None:
+async def _tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float) -> None:
     freezer.tick(timedelta(seconds=seconds))
     async_fire_time_changed(hass)
     await hass.async_block_till_done(wait_background_tasks=True)

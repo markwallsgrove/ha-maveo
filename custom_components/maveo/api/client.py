@@ -19,6 +19,8 @@ RIGHTS_ADMIN = 1  # unrestricted remote access
 
 @dataclass(frozen=True)
 class Device:
+    """A stick on the Maveo account."""
+
     id: str
     name: str
     device_type: int
@@ -26,6 +28,8 @@ class Device:
 
 @dataclass(frozen=True)
 class GuestUser:
+    """A guest key for one stick."""
+
     user_id: str
     token: str = field(repr=False)
     rights: str  # "0" = restricted (geofence), "1" = admin (remote)
@@ -55,9 +59,8 @@ def _guest_from_json(data: dict[str, Any]) -> GuestUser:
 class MaveoClient:
     """Client for the Maveo cloud REST API."""
 
-    def __init__(
-        self, session: aiohttp.ClientSession, auth: AuthResult, config: Config
-    ) -> None:
+    def __init__(self, session: aiohttp.ClientSession, auth: AuthResult, config: Config) -> None:
+        """Call the REST API with `session`, signed in as `auth`."""
         self._session = session
         self._auth = auth
         self._config = config
@@ -73,21 +76,14 @@ class MaveoClient:
             {"owner": self._auth.identity_id, "command": "list_device"},
             expected_status=200,
         )
-        return [
-            Device(id=str(d["id"]), name=d["name"], device_type=d["devicetype"])
-            for d in data
-        ]
+        return [Device(id=str(d["id"]), name=d["name"], device_type=d["devicetype"]) for d in data]
 
     async def list_guest_users(self, device_id: str) -> list[GuestUser]:
         """Return all guest users for a device."""
-        data = await self._post(
-            {"deviceid": device_id, "command": "list_user"}, expected_status=200
-        )
+        data = await self._post({"deviceid": device_id, "command": "list_user"}, expected_status=200)
         return [_guest_from_json(u) for u in data]
 
-    async def add_guest_user(
-        self, device_id: str, ttl_seconds: int, rights: int = RIGHTS_RESTRICTED
-    ) -> GuestUser:
+    async def add_guest_user(self, device_id: str, ttl_seconds: int, rights: int = RIGHTS_RESTRICTED) -> GuestUser:
         """Create a temporary guest user and return it, including its token."""
         data = await self._post(
             {

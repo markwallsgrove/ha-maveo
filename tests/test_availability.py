@@ -3,22 +3,21 @@
 from __future__ import annotations
 
 import dataclasses
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
-import pytest
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.util import dt as dt_util
+import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
 )
 
-from custom_components.maveo.api import Command
-from custom_components.maveo.api import config as maveo_config
+from custom_components.maveo.api import Command, config as maveo_config
 from custom_components.maveo.const import (
     ACCOUNT_POLL_INTERVAL,
     DEVICE_POLL_INTERVAL,
@@ -30,9 +29,7 @@ from .fakes import DEVICE_ID, EMAIL, PASSWORD, CognitoPool, FakeMaveoApi, FakeSt
 
 
 def _state(hass: HomeAssistant, platform: str, key: str) -> State:
-    entity_id = er.async_get(hass).async_get_entity_id(
-        platform, DOMAIN, f"{DEVICE_ID}_{key}"
-    )
+    entity_id = er.async_get(hass).async_get_entity_id(platform, DOMAIN, f"{DEVICE_ID}_{key}")
     assert entity_id is not None
     state = hass.states.get(entity_id)
     assert state is not None
@@ -103,9 +100,7 @@ async def test_unreachable_stick_recovers(
 
     stick.reachable = True
     stick.connack_code = 0
-    await _advance(
-        hass, (MISSED_POLLS_BEFORE_UNAVAILABLE + 1) * DEVICE_POLL_INTERVAL + 1
-    )
+    await _advance(hass, (MISSED_POLLS_BEFORE_UNAVAILABLE + 1) * DEVICE_POLL_INTERVAL + 1)
     assert _state(hass, "cover", "cover").state == "closed"
     assert _state(hass, "binary_sensor", "connectivity").state == "on"
 
@@ -119,9 +114,7 @@ async def test_silent_stick_is_only_asked_for_the_door(
     assert stick.commands == [Command.STATUS]
 
 
-async def test_command_to_unreachable_stick_raises(
-    hass: HomeAssistant, entry: ConfigEntry, stick: FakeStick
-) -> None:
+async def test_command_to_unreachable_stick_raises(hass: HomeAssistant, entry: ConfigEntry, stick: FakeStick) -> None:
     stick.reachable = False
     with pytest.raises(HomeAssistantError) as err:
         await hass.services.async_call(
@@ -162,27 +155,21 @@ async def test_unreachable_cloud_retries_setup(
     assert entry.state is ConfigEntryState.SETUP_RETRY
 
 
-async def test_rest_api_down_retries_setup(
-    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
-) -> None:
+async def test_rest_api_down_retries_setup(hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi) -> None:
     cloud.fail_with = 503
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.SETUP_RETRY
 
 
-async def test_account_poll_failure_keeps_devices(
-    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
-) -> None:
+async def test_account_poll_failure_keeps_devices(hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi) -> None:
     cloud.fail_with = 503
     await _advance(hass, ACCOUNT_POLL_INTERVAL + 1)
     assert DEVICE_ID in entry.runtime_data.devices
     assert _state(hass, "cover", "cover").state == "closed"
 
 
-async def test_account_without_devices_loads(
-    hass: HomeAssistant, cloud: FakeMaveoApi
-) -> None:
+async def test_account_without_devices_loads(hass: HomeAssistant, cloud: FakeMaveoApi) -> None:
     cloud.devices.clear()
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -196,9 +183,7 @@ async def test_account_without_devices_loads(
     assert not er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
 
 
-async def test_entry_without_refresh_token_signs_in_with_password(
-    hass: HomeAssistant, cloud: FakeMaveoApi
-) -> None:
+async def test_entry_without_refresh_token_signs_in_with_password(hass: HomeAssistant, cloud: FakeMaveoApi) -> None:
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id=EMAIL,
@@ -211,9 +196,7 @@ async def test_entry_without_refresh_token_signs_in_with_password(
     assert entry.data["refresh_token"]
 
 
-async def test_service_rejects_unknown_device(
-    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
-) -> None:
+async def test_service_rejects_unknown_device(hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi) -> None:
     with pytest.raises(ServiceValidationError) as err:
         await hass.services.async_call(
             DOMAIN,
@@ -221,6 +204,26 @@ async def test_service_rejects_unknown_device(
             {"device_id": "not-a-device"},
             blocking=True,
             return_response=True,
+        )
+    assert err.value.translation_key == "device_not_found"
+
+
+async def test_service_rejects_device_not_on_account(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    device = dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, identifiers={(DOMAIN, "9999")})
+    with pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(
+            DOMAIN, "create_guest", {"device_id": device.id}, blocking=True, return_response=True
+        )
+    assert err.value.translation_key == "device_not_found"
+
+
+async def test_service_rejects_device_of_unloaded_entry(
+    hass: HomeAssistant, entry: ConfigEntry, garage_device_id: str
+) -> None:
+    await hass.config_entries.async_unload(entry.entry_id)
+    with pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(
+            DOMAIN, "create_guest", {"device_id": garage_device_id}, blocking=True, return_response=True
         )
     assert err.value.translation_key == "device_not_found"
 
@@ -261,6 +264,30 @@ async def test_service_with_unreachable_cloud_raises(
             blocking=True,
         )
     assert err.value.translation_key == "cloud_unreachable"
+
+
+async def test_unreachable_cloud_during_poll_makes_entities_unavailable(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    monkeypatch: pytest.MonkeyPatch,
+    unused_tcp_port: int,
+) -> None:
+    # Credentials from moto expire at once, so each poll renews them first.
+    _cognito_unreachable(monkeypatch, unused_tcp_port)
+    entry.runtime_data.session.config = maveo_config.get_config(maveo_config.Region.EU)
+    await _advance(hass, DEVICE_POLL_INTERVAL + 1)
+    assert _state(hass, "cover", "cover").state == "unavailable"
+
+
+async def test_valid_credentials_are_not_renewed(hass: HomeAssistant, entry: ConfigEntry, stick: FakeStick) -> None:
+    session = entry.runtime_data.session
+    session.auth = dataclasses.replace(session.auth, expiration=datetime(2100, 1, 1, tzinfo=UTC))
+    auth = session.auth
+    await hass.services.async_call(
+        "light", "turn_off", {"entity_id": _state(hass, "light", "light").entity_id}, blocking=True
+    )
+    assert session.auth is auth
+    assert Command.LIGHT_OFF in stick.commands
 
 
 async def test_service_with_rejected_password_starts_reauth(

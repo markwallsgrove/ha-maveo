@@ -13,6 +13,8 @@ MAX_TRAVEL = timedelta(minutes=2)
 
 
 class Direction(StrEnum):
+    """The way the door travels."""
+
     OPEN = "open"
     CLOSE = "close"
 
@@ -38,13 +40,16 @@ class DoorTracker:
     """
 
     def __init__(self) -> None:
+        """Start with the door resting at an unknown position."""
         self._position: int | None = None
         self._moving: tuple[Direction, datetime] | None = None
 
     def command_sent(self, direction: Direction, now: datetime) -> None:
+        """Start timing a travel from a door command."""
         self._moving = (direction, now)
 
     def update(self, position: int | None, now: datetime) -> Travel | None:
+        """Record a position reading; the travel when it ends here."""
         if position is None:
             return None
         previous, self._position = self._position, position

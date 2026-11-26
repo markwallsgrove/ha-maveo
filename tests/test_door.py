@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from hypothesis import given
-from hypothesis import strategies as st
+from hypothesis import given, strategies as st
 
 from custom_components.maveo.api.iot import (
     DOOR_CLOSED,
@@ -99,10 +98,9 @@ def test_travels_only_end_at_a_new_resting_position(
         if travel is not None:
             end = DOOR_OPEN if travel.direction is Direction.OPEN else DOOR_CLOSED
             assert position == end
-            assert last is not None and last != end
-            assert travel.seconds is None or (
-                0 <= travel.seconds <= MAX_TRAVEL.total_seconds()
-            )
+            assert last is not None
+            assert last != end
+            assert travel.seconds is None or (0 <= travel.seconds <= MAX_TRAVEL.total_seconds())
         if position is not None:
             last = position
 
@@ -113,4 +111,5 @@ def test_durations_are_whole_seconds() -> None:
     tracker.command_sent(Direction.OPEN, _at(1))
     travel = tracker.update(DOOR_OPEN, _at(18.277691))
     assert travel == Travel(Direction.OPEN, 17)
-    assert travel is not None and isinstance(travel.seconds, int)
+    assert travel is not None
+    assert isinstance(travel.seconds, int)
